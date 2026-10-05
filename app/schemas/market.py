@@ -22,6 +22,11 @@ class MarketSnapshotRead(BaseModel):
     price: Decimal | None
     previous_close: Decimal | None
     market_cap: Decimal | None
+    market_cap_source: str | None
+    market_cap_method: str | None
+    market_cap_as_of: date | None
+    market_cap_confidence: str | None
+    market_cap_reason: str | None
     currency: str | None
     volume: int | None
     average_volume_20d: int | None

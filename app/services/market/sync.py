@@ -22,7 +22,9 @@ from app.services.analysis.opportunity_recalculate import recalculate_opportunit
 from app.services.jobs.errors import brief_error
 from app.services.market.calculations import SnapshotMetrics, build_snapshot
 from app.services.market.client import build_market_provider
-from app.services.market.provider import HISTORY_LOOKBACK_BARS, MARKET_SOURCE, DailyBar, MarketQuote
+from app.services.market.metadata import MarketCapAssessment, resolve_market_cap
+from app.services.market.provider import HISTORY_LOOKBACK_BARS, MARKET_SOURCE, DailyBar
+from app.services.market.symbols import resolve_provider_symbol
 from app.services.universe.manager import recalculate_universe_priority
 
 logger = logging.getLogger("sentinel.market")
@@ -38,6 +40,9 @@ async def execute_market_sync(session: AsyncSession, company_id: int, *, provide
     if not symbol:
         await _record_failure(session, company_id, "Company has no market symbol")
         return _summary(company_id, None, "skipped_no_symbol", 0, 0, 0, False, False, False, None)
+    provider_symbol = await resolve_provider_symbol(session, company, settings.market_provider)
+    if not provider_symbol:
+        provider_symbol = symbol
 
     await _mark_attempt(session, company_id)
     created_provider = None
@@ -48,15 +53,16 @@ async def execute_market_sync(session: AsyncSession, company_id: int, *, provide
         last_date = await _last_trade_date(session, company.id)
         end = datetime.now(timezone.utc).date()
         start = last_date if last_date is not None else _years_ago(end, settings.market_history_years)
-        bars = await provider.get_history(symbol, start, end)
-        quote = await provider.get_snapshot(symbol)
+        bars = await provider.get_history(provider_symbol, start, end)
+        quote = await provider.get_snapshot(provider_symbol)
         if not bars and last_date is None:
             raise RuntimeError("No market history returned")
         created, updated = await _upsert(session, company.id, bars)
         stored = await _stored_bars(session, company.id)
         metrics = build_snapshot(stored, quote)
-        await _save_snapshot(session, company.id, metrics)
-        cap_changed = _apply_market_cap(company, quote.market_cap if quote else None)
+        assessment = await resolve_market_cap(session, company, quote, metrics, stored)
+        await _save_snapshot(session, company.id, metrics, assessment)
+        cap_changed = _apply_market_cap(company, assessment)
         has_profile = await _has_profile(session, company.id)
         opportunity = False
         priority = False
@@ -164,7 +170,12 @@ async def _stored_bars(session: AsyncSession, company_id: int) -> list[DailyBar]
     ]
 
 
-async def _save_snapshot(session: AsyncSession, company_id: int, metrics: SnapshotMetrics) -> None:
+async def _save_snapshot(
+    session: AsyncSession,
+    company_id: int,
+    metrics: SnapshotMetrics,
+    assessment: MarketCapAssessment,
+) -> None:
     statement = select(CompanyMarketSnapshot).where(CompanyMarketSnapshot.company_id == company_id)
     row = (await session.execute(statement)).scalar_one_or_none()
     if row is None:
@@ -172,8 +183,12 @@ async def _save_snapshot(session: AsyncSession, company_id: int, metrics: Snapsh
         session.add(row)
     row.price = metrics.price
     row.previous_close = metrics.previous_close
-    if metrics.market_cap is not None:
-        row.market_cap = metrics.market_cap
+    row.market_cap = assessment.market_cap
+    row.market_cap_source = assessment.source
+    row.market_cap_method = assessment.method
+    row.market_cap_as_of = assessment.as_of
+    row.market_cap_confidence = assessment.confidence
+    row.market_cap_reason = assessment.reason[:500]
     if metrics.currency:
         row.currency = metrics.currency
     row.volume = metrics.volume
@@ -190,10 +205,10 @@ async def _save_snapshot(session: AsyncSession, company_id: int, metrics: Snapsh
     row.updated_at = datetime.now(timezone.utc)
 
 
-def _apply_market_cap(company: Company, market_cap: Decimal | None) -> bool:
-    if market_cap is None or market_cap <= 0:
+def _apply_market_cap(company: Company, assessment: MarketCapAssessment) -> bool:
+    if not assessment.updates_company or assessment.market_cap is None or assessment.market_cap <= 0:
         return False
-    normalized = market_cap.quantize(_CAP)
+    normalized = assessment.market_cap.quantize(_CAP)
     current = None if company.market_cap is None else Decimal(company.market_cap).quantize(_CAP)
     if current == normalized:
         return False

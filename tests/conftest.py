@@ -14,6 +14,22 @@ from app.models.opportunity_profile import OpportunityProfile  # noqa: F401
 from app.models.opportunity_score import OpportunityScore  # noqa: F401
 from app.models.market_price import MarketPrice  # noqa: F401
 from app.models.company_market_snapshot import CompanyMarketSnapshot  # noqa: F401
+from app.models.market_provider_symbol import MarketProviderSymbol  # noqa: F401
+from app.models.technical_snapshot import TechnicalSnapshot  # noqa: F401
+from app.models.investment_view import InvestmentView  # noqa: F401
+from app.models.intelligence import (  # noqa: F401
+    CompanyAlias,
+    DocumentCompany,
+    EventCompany,
+    ExternalDocument,
+    ExternalSource,
+    IntelligenceEvent,
+)
+from app.models.supply_chain import (  # noqa: F401
+    CompanyRelationship,
+    DiscoveredCompany,
+    RelationshipEvidence,
+)
 from app.models.universe_membership import UniverseMembership  # noqa: F401
 from app.models.user import User  # noqa: F401
 

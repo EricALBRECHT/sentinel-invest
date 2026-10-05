@@ -2,6 +2,7 @@
 
 import logging
 
+from app.jobs.investment import schedule_investment_view_after
 from app.jobs.runner import job_session, run_async
 from app.services.jobs.scoring import execute_opportunity, execute_quality
 
@@ -28,6 +29,8 @@ def _run(name: str, company_id: int, function) -> dict:
             type(exc).__name__,
         )
         raise
+    result = dict(result)
+    result["investment_view_job_enqueued"] = schedule_investment_view_after(result)
     logger.info("job_finished name=%s company_id=%s status=%s", name, company_id, result.get("status"))
     return result
 

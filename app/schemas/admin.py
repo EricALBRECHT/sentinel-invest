@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -66,6 +66,57 @@ class MarketCounts(BaseModel):
     market_jobs_due: int | None
 
 
+class TechnicalCounts(BaseModel):
+    companies_scored: int | None
+    companies_without_score: int | None
+    last_calculation: datetime | None
+    technical_snapshots_count: int | None
+    oldest_technical_date: date | None
+    latest_technical_date: date | None
+
+
+class InvestmentViewCounts(BaseModel):
+    companies_with_view: int | None
+    last_calculation: datetime | None
+
+
+class IntelligenceCounts(BaseModel):
+    sources_active: int | None
+    documents_total: int | None
+    documents_last_24h: int | None
+    events_total: int | None
+    events_last_24h: int | None
+    last_success: datetime | None
+    failed_sources: int | None
+
+
+class SupplyChainCounts(BaseModel):
+    relationships_total: int | None
+    confirmed_relationships: int | None
+    candidate_relationships: int | None
+    discovered_companies: int | None
+    last_processing: datetime | None
+
+
+class DiscoveryVerificationCounts(BaseModel):
+    unverified: int | None
+    partial: int | None
+    verified: int | None
+    promoted: int | None
+    rejected: int | None
+    last_verification: datetime | None
+
+
+class DiscoveryExpansionCounts(BaseModel):
+    ready: int | None
+    collecting: int | None
+    analyzed: int | None
+    blocked: int | None
+    max_depth: int | None
+    deepest_company: str | None
+    last_expansion: datetime | None
+
+
 class AdminStatusRead(BaseModel):
     system: SystemStatus
     data: DataCounts
@@ -75,4 +126,10 @@ class AdminStatusRead(BaseModel):
     sync: SyncSupervision
     universe: UniverseCounts
     market: MarketCounts
+    technical: TechnicalCounts
+    investment_view: InvestmentViewCounts
+    intelligence: IntelligenceCounts
+    supply_chain: SupplyChainCounts
+    discovery_verification: DiscoveryVerificationCounts
+    discovery_expansion: DiscoveryExpansionCounts
     server: ServerStatus

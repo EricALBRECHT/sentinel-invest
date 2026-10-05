@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.company import Company
+from app.core.config import settings
 from app.schemas.company import CompanyCreate, CompanyRead, CompanyUpdate
+from app.schemas.discovery_expansion import DiscoveryStatusRead
+from app.services.discovery_expansion.sources import linked_source_ids, sec_financial_eligible
 
 router = APIRouter(
     prefix="/companies",
@@ -123,6 +126,29 @@ async def list_companies(
         )
     result = await db.execute(statement.offset(offset).limit(limit))
     return list(result.scalars().all())
+
+
+@router.get("/{company_id}/discovery-status", response_model=DiscoveryStatusRead)
+async def company_discovery_status(
+    company_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> DiscoveryStatusRead:
+    company = await db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    return DiscoveryStatusRead(
+        company_id=company.id,
+        universe_status=company.universe_status,
+        discovery_pipeline_status=company.discovery_pipeline_status,
+        discovery_depth=company.discovery_depth,
+        discovered_parent_company_id=company.discovered_parent_company_id,
+        last_discovery_collection_at=company.last_discovery_collection_at,
+        last_relationship_processing_at=company.last_relationship_processing_at,
+        market_symbol=company.market_symbol,
+        sec_sync_eligible=sec_financial_eligible(company),
+        sources=len(await linked_source_ids(db, company.id)),
+        max_depth=settings.discovery_max_depth,
+    )
 
 
 @router.get("/{company_id}", response_model=CompanyRead)

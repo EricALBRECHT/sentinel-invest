@@ -5,8 +5,11 @@ Sentinel calls the public chart endpoint used by Yahoo's own pages:
     https://query1.finance.yahoo.com/v8/finance/chart/{symbol}
 
 Daily bars include adjusted close, so splits are not recomputed here.
-A second small chart request reads the latest quote and market cap from the
-same payload when Yahoo includes them. Requests are spaced by
+The chart payload sometimes includes marketCap. This client only returns that
+figure. Price times shares is decided later, outside this client.
+The caller passes the provider symbol. A listing alias lives in
+market_provider_symbols, not in this client.
+Requests are spaced by
 MARKET_MIN_INTERVAL_SECONDS and time out after MARKET_TIMEOUT_SECONDS.
 This is an unofficial source. It can change or refuse anonymous clients.
 """
@@ -62,7 +65,7 @@ class YahooMarketProvider:
         return _quote(payload)
 
     async def _chart(self, symbol: str, start: date, end: date) -> dict:
-        url = _CHART_URL.format(symbol=quote(symbol, safe=""))
+        url = _CHART_URL.format(symbol=quote(symbol.strip(), safe=".-"))
         period1 = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
         period2 = int(datetime(end.year, end.month, end.day, 23, 59, tzinfo=timezone.utc).timestamp())
         params = {

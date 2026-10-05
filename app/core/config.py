@@ -38,6 +38,27 @@ class Settings(BaseSettings):
     market_sync_interval_hours: int = 24
     market_sync_scan_hours: int = 24
     market_sync_max_companies_per_run: int = 200
+    intelligence_user_agent: str = "Sentinel news-collector contact@example.com"
+    intelligence_timeout_seconds: float = 20.0
+    intelligence_max_retries: int = 3
+    intelligence_min_interval_seconds: float = 1.0
+    intelligence_lookback_days: int = 7
+    intelligence_scan_hours: int = 2
+    intelligence_max_companies_per_run: int = 20
+    intelligence_max_text_chars: int = 20000
+    supply_chain_scan_hours: int = 24
+    supply_chain_portfolio_interval_hours: int = 24
+    supply_chain_deep_interval_hours: int = 24
+    supply_chain_watched_interval_hours: int = 48
+    supply_chain_max_companies_per_run: int = 20
+    supply_chain_lookback_days: int = 30
+    discovery_verify_max_per_run: int = 20
+    discovery_verify_scan_hours: int = 24
+    discovery_verify_min_confidence: int = 75
+    discovery_max_depth: int = 3
+    discovery_expansion_max_per_run: int = 20
+    discovery_expansion_scan_hours: int = 24
+    discovery_expansion_analyzed_hours: int = 48
 
     class Config:
         env_file = ".env"

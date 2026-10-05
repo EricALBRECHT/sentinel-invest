@@ -5,6 +5,7 @@ import logging
 from app.core.config import settings
 from app.jobs.queues import enqueue_market_sync, redis_connection
 from app.jobs.runner import job_session, run_async
+from app.jobs.technical import schedule_technical_after_market
 from app.services.market.schedule import select_due_market_company_ids
 from app.services.market.sync import execute_market_sync
 
@@ -28,6 +29,8 @@ def sync_company_market(company_id: int) -> dict:
         )
         raise
     else:
+        result = dict(result)
+        result["technical_job_enqueued"] = schedule_technical_after_market(result)
         logger.info(
             "job_finished name=sync_company_market company_id=%s sync=%s",
             company_id,

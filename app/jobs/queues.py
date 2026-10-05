@@ -16,7 +16,8 @@ QUEUE_DEFAULT = "default"
 QUEUE_SEC = "sec"
 QUEUE_ANALYSIS = "analysis"
 QUEUE_MARKET = "market"
-QUEUE_NAMES = (QUEUE_DEFAULT, QUEUE_SEC, QUEUE_ANALYSIS, QUEUE_MARKET)
+QUEUE_INTELLIGENCE = "intelligence"
+QUEUE_NAMES = (QUEUE_DEFAULT, QUEUE_SEC, QUEUE_ANALYSIS, QUEUE_MARKET, QUEUE_INTELLIGENCE)
 
 _ACTIVE = frozenset({"queued", "started", "deferred", "scheduled"})
 
@@ -57,6 +58,34 @@ def opportunity_job_id(company_id: int) -> str:
 
 def market_job_id(company_id: int) -> str:
     return f"market-sync-company-{company_id}"
+
+
+def technical_job_id(company_id: int) -> str:
+    return f"technical-score-company-{company_id}"
+
+
+def technical_backfill_job_id(company_id: int) -> str:
+    return f"technical-backfill-company-{company_id}"
+
+
+def news_job_id(company_id: int) -> str:
+    return f"news-sync-company-{company_id}"
+
+
+def source_poll_job_id(source_id: int) -> str:
+    return f"external-source-poll-{source_id}"
+
+
+def process_document_job_id(document_id: int) -> str:
+    return f"intelligence-process-document-{document_id}"
+
+
+def intelligence_retry() -> Retry:
+    return Retry(max=2, interval=[60, 300])
+
+
+def investment_view_job_id(company_id: int) -> str:
+    return f"investment-view-company-{company_id}"
 
 
 def enqueue_job(
@@ -170,6 +199,152 @@ def enqueue_market_sync(company_id: int) -> dict:
         job_id=market_job_id(company_id),
         retry=market_retry(),
         timeout=180,
+    )
+
+
+def enqueue_technical(company_id: int) -> dict:
+    return enqueue_job(
+        QUEUE_ANALYSIS,
+        "app.jobs.technical.recalculate_technical",
+        company_id,
+        job_id=technical_job_id(company_id),
+        retry=score_retry(),
+        timeout=300,
+    )
+
+
+def enqueue_investment_view(company_id: int) -> dict:
+    return enqueue_job(
+        QUEUE_ANALYSIS,
+        "app.jobs.investment.recalculate_investment",
+        company_id,
+        job_id=investment_view_job_id(company_id),
+        retry=score_retry(),
+        timeout=300,
+    )
+
+
+def enqueue_news_sync(company_id: int, force: bool = False) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.intelligence.sync_news_company",
+        company_id,
+        force,
+        job_id=news_job_id(company_id),
+        retry=intelligence_retry(),
+        timeout=300,
+    )
+
+
+def enqueue_source_poll(source_id: int) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.intelligence.poll_external_source",
+        source_id,
+        job_id=source_poll_job_id(source_id),
+        retry=intelligence_retry(),
+        timeout=180,
+    )
+
+
+def supply_chain_job_id(company_id: int) -> str:
+    return f"supply-chain-company-{company_id}"
+
+
+def enqueue_supply_chain(company_id: int) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.supply_chain.process_supply_chain_company",
+        company_id,
+        job_id=supply_chain_job_id(company_id),
+        retry=intelligence_retry(),
+        timeout=300,
+    )
+
+
+def verify_candidate_job_id(candidate_id: int) -> str:
+    return f"verify-candidate-{candidate_id}"
+
+
+def discovery_verification_batch_job_id() -> str:
+    return "verify-discovered-candidates"
+
+
+def enqueue_verify_candidate(candidate_id: int) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.discovery_verification.verify_candidate_job",
+        candidate_id,
+        job_id=verify_candidate_job_id(candidate_id),
+        retry=intelligence_retry(),
+        timeout=180,
+    )
+
+
+def discovery_expansion_job_id(company_id: int) -> str:
+    return f"expand-discovered-company-{company_id}"
+
+
+def discovery_expansion_batch_job_id() -> str:
+    return "expand-discovered-companies"
+
+
+def enqueue_discovery_expansion(company_id: int) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.discovery_expansion.expand_discovered_company_job",
+        company_id,
+        job_id=discovery_expansion_job_id(company_id),
+        retry=intelligence_retry(),
+        timeout=300,
+    )
+
+
+def enqueue_discovery_expansion_batch() -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.discovery_expansion.enqueue_due_discovery_expansions",
+        job_id=discovery_expansion_batch_job_id(),
+        retry=intelligence_retry(),
+        timeout=180,
+    )
+
+
+def enqueue_discovery_verification_batch() -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.discovery_verification.enqueue_due_discovery_verifications",
+        job_id=discovery_verification_batch_job_id(),
+        retry=intelligence_retry(),
+        timeout=180,
+    )
+
+
+def enqueue_process_document(document_id: int) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.intelligence.process_intelligence_document",
+        document_id,
+        job_id=process_document_job_id(document_id),
+        retry=intelligence_retry(),
+        timeout=120,
+    )
+
+
+def enqueue_technical_backfill(
+    company_id: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    return enqueue_call(
+        QUEUE_ANALYSIS,
+        "app.jobs.technical.backfill_technical",
+        company_id,
+        start_date,
+        end_date,
+        job_id=technical_backfill_job_id(company_id),
+        retry=score_retry(),
+        timeout=900,
     )
 
 

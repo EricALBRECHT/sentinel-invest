@@ -12,6 +12,10 @@ from app.api.routes.jobs import router as jobs_router
 from app.api.routes.market import router as market_router
 from app.api.routes.opportunity import router as opportunity_router
 from app.api.routes.scores import router as scores_router
+from app.api.routes.intelligence import router as intelligence_router
+from app.api.routes.supply_chain import router as supply_chain_router
+from app.api.routes.investment_view import router as investment_view_router
+from app.api.routes.technical import router as technical_router
 from app.api.routes.universe import company_router as company_universe_router
 from app.api.routes.universe import import_router as universe_import_router
 from app.api.routes.universe import router as universe_router
@@ -43,6 +47,10 @@ app.include_router(market_router)
 app.include_router(financials_router)
 app.include_router(scores_router)
 app.include_router(opportunity_router)
+app.include_router(technical_router)
+app.include_router(investment_view_router)
+app.include_router(intelligence_router)
+app.include_router(supply_chain_router)
 
 @app.get("/health")
 async def health():

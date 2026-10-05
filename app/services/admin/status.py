@@ -20,6 +20,8 @@ from app.models.financial_metric import FinancialMetric
 from app.models.market_price import MarketPrice
 from app.models.universe_membership import UniverseMembership
 from app.models.opportunity_score import OpportunityScore
+from app.models.investment_view import InvestmentView
+from app.models.technical_snapshot import TechnicalSnapshot
 from app.models.user import User
 from app.runtime import STARTED_AT
 from app.schemas.admin import (
@@ -33,7 +35,17 @@ from app.schemas.admin import (
     SystemStatus,
     UniverseCounts,
     MarketCounts,
+    TechnicalCounts,
+    InvestmentViewCounts,
+    IntelligenceCounts,
+    SupplyChainCounts,
+    DiscoveryVerificationCounts,
+    DiscoveryExpansionCounts,
 )
+from app.services.intelligence.documents import intelligence_counts
+from app.services.supply_chain.extraction import supply_chain_counts
+from app.services.discovery_verification.verifier import verification_counts
+from app.services.discovery_expansion.summary import expansion_counts
 from app.services.jobs.schedule import select_due_company_ids
 from app.services.jobs.status import collect_job_counts
 from app.services.market.provider import MARKET_SOURCE
@@ -76,6 +88,48 @@ _EMPTY_MARKET = MarketCounts(
     last_market_sync=None,
     market_jobs_due=None,
 )
+_EMPTY_TECHNICAL = TechnicalCounts(
+    companies_scored=None,
+    companies_without_score=None,
+    last_calculation=None,
+    technical_snapshots_count=None,
+    oldest_technical_date=None,
+    latest_technical_date=None,
+)
+_EMPTY_INVESTMENT = InvestmentViewCounts(companies_with_view=None, last_calculation=None)
+_EMPTY_SUPPLY = SupplyChainCounts(
+    relationships_total=None,
+    confirmed_relationships=None,
+    candidate_relationships=None,
+    discovered_companies=None,
+    last_processing=None,
+)
+_EMPTY_DISCOVERY = DiscoveryVerificationCounts(
+    unverified=None,
+    partial=None,
+    verified=None,
+    promoted=None,
+    rejected=None,
+    last_verification=None,
+)
+_EMPTY_EXPANSION = DiscoveryExpansionCounts(
+    ready=None,
+    collecting=None,
+    analyzed=None,
+    blocked=None,
+    max_depth=None,
+    deepest_company=None,
+    last_expansion=None,
+)
+_EMPTY_INTELLIGENCE = IntelligenceCounts(
+    sources_active=None,
+    documents_total=None,
+    documents_last_24h=None,
+    events_total=None,
+    events_last_24h=None,
+    last_success=None,
+    failed_sources=None,
+)
 
 
 async def build_admin_status(db: AsyncSession) -> AdminStatusRead:
@@ -86,10 +140,22 @@ async def build_admin_status(db: AsyncSession) -> AdminStatusRead:
         sync = await _sync_counts(db)
         universe = await _universe_counts(db)
         market = await _market_counts(db)
+        technical = await _technical_counts(db)
+        investment = await _investment_counts(db)
+        intelligence = await _intelligence_counts(db)
+        supply = await _supply_chain_counts(db)
+        discovery = await _discovery_counts(db)
+        expansion = await _expansion_counts(db)
     else:
         data, analysis, sec, sync = _EMPTY_DATA, _EMPTY_ANALYSIS, _EMPTY_SEC, _EMPTY_SYNC
         universe = _EMPTY_UNIVERSE
         market = _EMPTY_MARKET
+        technical = _EMPTY_TECHNICAL
+        investment = _EMPTY_INVESTMENT
+        intelligence = _EMPTY_INTELLIGENCE
+        supply = _EMPTY_SUPPLY
+        discovery = _EMPTY_DISCOVERY
+        expansion = _EMPTY_EXPANSION
     jobs = _EMPTY_JOBS
     if redis_status == "ok":
         counted = await asyncio.to_thread(collect_job_counts)
@@ -105,6 +171,12 @@ async def build_admin_status(db: AsyncSession) -> AdminStatusRead:
         sync=sync,
         universe=universe,
         market=market,
+        technical=technical,
+        investment_view=investment,
+        intelligence=intelligence,
+        supply_chain=supply,
+        discovery_verification=discovery,
+        discovery_expansion=expansion,
         server=ServerStatus(
             started_at=STARTED_AT,
             uptime_seconds=max(0, int((now - STARTED_AT).total_seconds())),
@@ -244,6 +316,85 @@ async def _market_counts(db: AsyncSession) -> MarketCounts:
         last_market_sync=last_sync,
         market_jobs_due=len(due),
     )
+
+
+async def _technical_counts(db: AsyncSession) -> TechnicalCounts:
+    try:
+        scored = int(
+            (
+                await db.execute(
+                    select(func.count(func.distinct(TechnicalSnapshot.company_id))).where(
+                        TechnicalSnapshot.technical_score.is_not(None)
+                    )
+                )
+            ).scalar_one()
+        )
+        total = await _count(db, Company)
+        last_calculation = await db.scalar(select(func.max(TechnicalSnapshot.updated_at)))
+        snapshots = await _count(db, TechnicalSnapshot)
+        oldest = await db.scalar(select(func.min(TechnicalSnapshot.as_of_date)))
+        latest = await db.scalar(select(func.max(TechnicalSnapshot.as_of_date)))
+    except Exception as exc:
+        logger.warning("admin_status_technical_count_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_TECHNICAL
+    return TechnicalCounts(
+        companies_scored=scored,
+        companies_without_score=max(0, total - scored),
+        last_calculation=last_calculation,
+        technical_snapshots_count=snapshots,
+        oldest_technical_date=oldest,
+        latest_technical_date=latest,
+    )
+
+
+async def _investment_counts(db: AsyncSession) -> InvestmentViewCounts:
+    try:
+        companies = int(
+            (
+                await db.execute(select(func.count(func.distinct(InvestmentView.company_id))))
+            ).scalar_one()
+        )
+        last_calculation = await db.scalar(select(func.max(InvestmentView.updated_at)))
+    except Exception as exc:
+        logger.warning("admin_status_investment_count_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_INVESTMENT
+    return InvestmentViewCounts(companies_with_view=companies, last_calculation=last_calculation)
+
+
+async def _intelligence_counts(db: AsyncSession) -> IntelligenceCounts:
+    try:
+        counted = await intelligence_counts(db)
+    except Exception as exc:
+        logger.warning("admin_status_intelligence_count_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_INTELLIGENCE
+    return IntelligenceCounts(**counted)
+
+
+async def _supply_chain_counts(db: AsyncSession) -> SupplyChainCounts:
+    try:
+        counted = await supply_chain_counts(db)
+    except Exception as exc:
+        logger.warning("admin_status_supply_chain_count_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_SUPPLY
+    return SupplyChainCounts(**counted)
+
+
+async def _expansion_counts(db: AsyncSession) -> DiscoveryExpansionCounts:
+    try:
+        counted = await expansion_counts(db)
+    except Exception as exc:
+        logger.warning("admin_status_discovery_expansion_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_EXPANSION
+    return DiscoveryExpansionCounts(**counted)
+
+
+async def _discovery_counts(db: AsyncSession) -> DiscoveryVerificationCounts:
+    try:
+        counted = await verification_counts(db)
+    except Exception as exc:
+        logger.warning("admin_status_discovery_verification_failed error_type=%s", type(exc).__name__)
+        return _EMPTY_DISCOVERY
+    return DiscoveryVerificationCounts(**counted)
 
 
 async def _count(db: AsyncSession, model, *criteria) -> int:

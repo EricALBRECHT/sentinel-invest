@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Integer, Numeric, String, false, func, true
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, false, func, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -23,6 +23,11 @@ class Company(Base):
             "('MANUAL', 'SP500', 'NASDAQ100', 'PEA', 'EUROPE', 'SUPPLY_CHAIN', 'BOTTLENECK', 'INSTITUTIONAL', 'OTHER')",
             name="ck_companies_discovery_source",
         ),
+        CheckConstraint(
+            "discovery_pipeline_status IN ('NEW', 'READY', 'COLLECTING', 'ANALYZED', 'BLOCKED')",
+            name="ck_companies_discovery_pipeline_status",
+        ),
+        CheckConstraint("discovery_depth >= 0", name="ck_companies_discovery_depth"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -56,6 +61,20 @@ class Company(Base):
     )
     discovery_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     discovery_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    discovery_pipeline_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="NEW",
+        server_default="NEW",
+    )
+    last_discovery_collection_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_relationship_processing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    discovery_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    discovered_parent_company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -110,6 +129,45 @@ class Company(Base):
         lazy="raise",
         uselist=False,
     )
+    provider_symbols: Mapped[list["MarketProviderSymbol"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    technical_snapshots: Mapped[list["TechnicalSnapshot"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    investment_views: Mapped[list["InvestmentView"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    aliases: Mapped[list["CompanyAlias"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    document_links: Mapped[list["DocumentCompany"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    event_links: Mapped[list["EventCompany"]] = relationship(
+        back_populates="company",
+        lazy="raise",
+    )
+    relationships_out: Mapped[list["CompanyRelationship"]] = relationship(
+        foreign_keys="CompanyRelationship.source_company_id",
+        back_populates="source_company",
+        lazy="raise",
+    )
+    relationships_in: Mapped[list["CompanyRelationship"]] = relationship(
+        foreign_keys="CompanyRelationship.target_company_id",
+        back_populates="target_company",
+        lazy="raise",
+    )
+    discovered_companies: Mapped[list["DiscoveredCompany"]] = relationship(
+        back_populates="discovered_from",
+        foreign_keys="DiscoveredCompany.discovered_from_company_id",
+        lazy="raise",
+    )
 
 
 from app.models.company_score import CompanyScore  # noqa: E402,F401
@@ -120,3 +178,16 @@ from app.models.opportunity_score import OpportunityScore  # noqa: E402,F401
 from app.models.universe_membership import UniverseMembership  # noqa: E402,F401
 from app.models.market_price import MarketPrice  # noqa: E402,F401
 from app.models.company_market_snapshot import CompanyMarketSnapshot  # noqa: E402,F401
+from app.models.market_provider_symbol import MarketProviderSymbol  # noqa: E402,F401
+from app.models.technical_snapshot import TechnicalSnapshot  # noqa: E402,F401
+from app.models.investment_view import InvestmentView  # noqa: E402,F401
+from app.models.intelligence import (  # noqa: E402,F401
+    CompanyAlias,
+    DocumentCompany,
+    EventCompany,
+)
+from app.models.supply_chain import (  # noqa: E402,F401
+    CompanyRelationship,
+    DiscoveredCompany,
+    RelationshipEvidence,
+)
