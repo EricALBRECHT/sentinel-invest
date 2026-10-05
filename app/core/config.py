@@ -1,0 +1,47 @@
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    app_env: str = "dev"
+
+    postgres_db: str
+    postgres_user: str
+    postgres_password: str
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+
+    redis_host: str = "redis"
+    redis_port: int = 6379
+    redis_db: int = 0
+
+    jwt_secret_key: str = "dev-only-change-me-set-JWT_SECRET_KEY"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
+    # Development placeholder. Replace with a real application name and contact
+    # email before relying on SEC EDGAR; the SEC rejects anonymous clients.
+    sec_user_agent: str = "Sentinel contact@example.com"
+    sec_timeout_seconds: float = 30.0
+    sec_max_retries: int = 3
+    sec_min_interval_seconds: float = 0.2
+    sec_sync_interval_hours: int = 24
+    sec_sync_scan_hours: int = 6
+    sec_sync_max_companies_per_run: int = 50
+    universe_priority_interval_hours: int = 24
+    universe_stale_days: int = 365
+    market_provider: str = "yahoo"
+    market_user_agent: str = "Sentinel market-data contact@example.com"
+    market_timeout_seconds: float = 30.0
+    market_max_retries: int = 3
+    market_min_interval_seconds: float = 1.0
+    market_history_years: int = 10
+    market_sync_interval_hours: int = 24
+    market_sync_scan_hours: int = 24
+    market_sync_max_companies_per_run: int = 200
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()
+
