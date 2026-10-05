@@ -31,12 +31,18 @@ async def select_due_news_company_ids(session: AsyncSession, *, now: datetime | 
     moment = now or datetime.now(timezone.utc)
     sources = (await session.scalars(select(ExternalSource).where(ExternalSource.is_active.is_(True)))).all()
     linked = {int(source.metadata_json.get("company_id")) for source in sources if _company_id(source) is not None}
-    linked.update(
-        int(company_id)
-        for company_id in (
-            await session.scalars(select(CompanyExternalSource.company_id).distinct())
-        ).all()
-    )
+    active_ids = [source.id for source in sources]
+    if active_ids:
+        linked.update(
+            int(company_id)
+            for company_id in (
+                await session.scalars(
+                    select(CompanyExternalSource.company_id)
+                    .where(CompanyExternalSource.source_id.in_(active_ids))
+                    .distinct()
+                )
+            ).all()
+        )
     if not linked:
         return []
     companies = (

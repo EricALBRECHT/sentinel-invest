@@ -10,7 +10,6 @@ from app.models.company import Company
 from app.models.company_sync_status import CompanySyncStatus
 from app.models.intelligence import CompanyAlias, DocumentCompany, ExternalDocument, ExternalSource
 from app.models.supply_chain import DiscoveredCompany
-from app.services.discovery_verification.matching import names_match
 from app.services.intelligence.company_matching import AMBIGUOUS_TOKENS
 from app.services.supply_chain.discovery import upsert_candidate
 from app.services.supply_chain.relationships import SUPPLY_CHAIN_SOURCE, upsert_relationship
@@ -225,6 +224,8 @@ def _orient_partner(hit: RelationHit, anchors: set[int]) -> RelationHit:
 
 
 def _catalog_company(entry, companies: list[Company], alias_names: dict[int, list[str]]) -> Company | None:
+    from app.services.discovery_verification.matching import names_match
+
     found: list[Company] = []
     for company in companies:
         labels = [company.name, *(alias_names.get(company.id) or [])]
@@ -238,7 +239,12 @@ def _catalog_company(entry, companies: list[Company], alias_names: dict[int, lis
 
 
 def _matches_known_company(label: str, entities: list[Entity]) -> bool:
-    return any(entity.company_id is not None and names_match(label, entity.label) for entity in entities)
+    from app.services.discovery_verification.matching import names_match
+
+    return any(
+        entity.company_id is not None and (names_match(label, entity.label) or any(names_match(label, name) for name in entity.names))
+        for entity in entities
+    )
 
 
 def _unique(names: list[str]) -> list[str]:
