@@ -10,21 +10,27 @@ from app.models.universe_membership import UniverseMembership
 from app.schemas.universe import (
     PriorityRead,
     UniverseAdd,
+    UniverseBootstrapRead,
     UniverseCompanyRead,
     UniverseImportRead,
+    UniverseIndexRefreshRead,
     UniverseListRead,
+    UniverseMarketStatusRead,
     UniverseMembershipRead,
 )
+from app.services.universe.bootstrap import bootstrap_universe_data, universe_market_status
 from app.services.universe.importers import import_rows, parse_import
 from app.services.universe.manager import (
     CompanyNotFound,
     MembershipNotFound,
     add_company_to_universe,
+    count_universe,
     get_company_universes,
     list_universe,
     recalculate_universe_priority,
     remove_company_from_universe,
 )
+from app.services.universe.refresh import refresh_nasdaq100, refresh_sp500
 from app.services.universe.rules import UniverseRuleError
 
 router = APIRouter(prefix="/universe", tags=["universe"], dependencies=[Depends(get_current_user)])
@@ -64,29 +70,58 @@ async def _companies(session: AsyncSession, companies: list[Company]) -> list[Un
     ]
 
 
+async def _list_payload(
+    db: AsyncSession,
+    *,
+    universe_name: str | None,
+    status_filter: str | None,
+    source: str | None,
+    active: bool | None,
+    search: str | None,
+    limit: int,
+    offset: int,
+) -> UniverseListRead:
+    kwargs = {
+        "universe_name": universe_name,
+        "status": status_filter,
+        "source": source,
+        "active": active,
+        "search": search,
+    }
+    companies = await list_universe(db, limit=limit, offset=offset, **kwargs)
+    total = await count_universe(db, **kwargs)
+    return UniverseListRead(
+        items=await _companies(db, companies),
+        limit=limit,
+        offset=offset,
+        total=total,
+    )
+
+
 @router.get("", response_model=UniverseListRead)
 async def get_universe(
     status_filter: str | None = Query(default=None, alias="status"),
     source: str | None = Query(default=None),
     universe_name: str | None = Query(default=None),
     active: bool | None = Query(default=None),
+    search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ) -> UniverseListRead:
     try:
-        companies = await list_universe(
+        return await _list_payload(
             db,
             universe_name=universe_name,
-            status=status_filter,
+            status_filter=status_filter,
             source=source,
             active=active,
+            search=search,
             limit=limit,
             offset=offset,
         )
     except UniverseRuleError as exc:
         raise _rule_error(exc)
-    return UniverseListRead(items=await _companies(db, companies), limit=limit, offset=offset)
 
 
 @router.get("/{universe_name}", response_model=UniverseListRead)
@@ -95,23 +130,24 @@ async def get_named_universe(
     status_filter: str | None = Query(default=None, alias="status"),
     source: str | None = Query(default=None),
     active: bool | None = Query(default=None),
+    search: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ) -> UniverseListRead:
     try:
-        companies = await list_universe(
+        return await _list_payload(
             db,
             universe_name=universe_name,
-            status=status_filter,
+            status_filter=status_filter,
             source=source,
             active=active,
+            search=search,
             limit=limit,
             offset=offset,
         )
     except UniverseRuleError as exc:
         raise _rule_error(exc)
-    return UniverseListRead(items=await _companies(db, companies), limit=limit, offset=offset)
 
 
 @router.post("/companies/{company_id}", response_model=UniverseMembershipRead)
@@ -192,3 +228,29 @@ async def import_universe(request: Request, db: AsyncSession = Depends(get_db)) 
         return await import_rows(db, rows)
     except UniverseRuleError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@import_router.post("/refresh/sp500", response_model=UniverseIndexRefreshRead)
+async def refresh_sp500_route(db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        return await refresh_sp500(db)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="S&P 500 refresh failed") from exc
+
+
+@import_router.post("/refresh/nasdaq100", response_model=UniverseIndexRefreshRead)
+async def refresh_nasdaq100_route(db: AsyncSession = Depends(get_db)) -> dict:
+    try:
+        return await refresh_nasdaq100(db)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Nasdaq-100 refresh failed") from exc
+
+
+@import_router.post("/bootstrap", response_model=UniverseBootstrapRead)
+async def bootstrap_universe_route(db: AsyncSession = Depends(get_db)) -> dict:
+    return await bootstrap_universe_data(db)
+
+
+@import_router.get("/status", response_model=UniverseMarketStatusRead)
+async def universe_status_route(db: AsyncSession = Depends(get_db)) -> dict:
+    return await universe_market_status(db)

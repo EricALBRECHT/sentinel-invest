@@ -5,3 +5,8 @@ __pycache__/
 .venv/
 venv/
 *.log
+deploy/gpu-worker/run/
+deploy/gpu-worker/models/
+deploy/gpu-worker/ssh/
+sentinel_gpu
+sentinel_gpu.pub

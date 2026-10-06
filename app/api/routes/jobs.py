@@ -12,6 +12,7 @@ from app.jobs.market_sync import enqueue_selected_market
 from app.jobs.queues import (
     enqueue_discovery_expansion,
     enqueue_discovery_verification_batch,
+    enqueue_gpu_probe,
     enqueue_market_sync,
     enqueue_news_sync,
     enqueue_sec_sync,
@@ -135,6 +136,13 @@ async def enqueue_company_discovery_expansion(
 @router.post("/verify-discovered-candidates", response_model=JobEnqueueRead)
 async def enqueue_discovery_verification() -> JSONResponse:
     queued = await asyncio.to_thread(enqueue_discovery_verification_batch)
+    code = status.HTTP_202_ACCEPTED if queued["enqueued"] else status.HTTP_200_OK
+    return JSONResponse(status_code=code, content=JobEnqueueRead(**queued).model_dump())
+
+
+@router.post("/gpu-probe", response_model=JobEnqueueRead)
+async def enqueue_gpu_system_probe() -> JSONResponse:
+    queued = await asyncio.to_thread(enqueue_gpu_probe)
     code = status.HTTP_202_ACCEPTED if queued["enqueued"] else status.HTTP_200_OK
     return JSONResponse(status_code=code, content=JobEnqueueRead(**queued).model_dump())
 

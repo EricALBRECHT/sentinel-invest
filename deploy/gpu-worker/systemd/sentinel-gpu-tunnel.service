@@ -1,0 +1,13 @@
+[Unit]
+Description=Tunnel SSH Sentinel vers Redis du core
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__TUNNEL_SCRIPT__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

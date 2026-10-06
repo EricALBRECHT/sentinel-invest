@@ -69,4 +69,52 @@
       <li>Société la plus profonde <strong>{{ status.discovery_expansion.deepest_company or "—" }}</strong></li>
     </ul>
   </section>
+  <section class="panel">
+    <h2>Univers de marché</h2>
+    <ul class="facts">
+      <li>S&amp;P 500 <strong>{{ universe_market.sp500_members }}</strong></li>
+      <li>Dernier refresh S&amp;P 500 <strong>{{ universe_market.sp500_refresh }}</strong></li>
+      <li>Nasdaq-100 <strong>{{ universe_market.nasdaq_members }}</strong></li>
+      <li>Dernier refresh Nasdaq-100 <strong>{{ universe_market.nasdaq_refresh }}</strong></li>
+      <li>En attente marché <strong>{{ display(universe_market.pending_market, 0) }}</strong></li>
+      <li>En attente SEC <strong>{{ display(universe_market.pending_sec, 0) }}</strong></li>
+      <li>Sociétés prêtes <strong>{{ display(universe_market.ready, 0) }}</strong></li>
+      <li>Progression bootstrap <strong>{{ universe_market.progress }}</strong></li>
+      <li>Dernier bootstrap <strong>{{ universe_market.last_bootstrap }}</strong></li>
+      <li>Lot max / passage <strong>{{ display(universe_market.max_per_run, 0) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Workers GPU</h2>
+    {% if gpu_workers %}
+    <table>
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Présence</th>
+          <th>GPU</th>
+          <th>VRAM</th>
+          <th>Dernier heartbeat</th>
+          <th>Statut</th>
+          <th>Dernier probe</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for worker in gpu_workers %}
+        <tr>
+          <td>{{ worker.name }}</td>
+          <td><span class="badge {{ worker.presence_tone }}">{{ worker.presence_label }}</span></td>
+          <td>{{ worker.gpu_name }}</td>
+          <td>{{ worker.memory_label }}</td>
+          <td>{{ worker.heartbeat_label }}</td>
+          <td>{{ worker.status_label }}</td>
+          <td>{{ worker.probe_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Aucun worker GPU en ligne.</p>
+    {% endif %}
+  </section>
 </div>

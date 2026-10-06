@@ -1,0 +1,41 @@
+name: sentinel-gpu
+
+services:
+  gpu-worker:
+    build:
+      context: ../..
+      dockerfile: deploy/gpu-worker/Dockerfile
+    image: sentinel-gpu-worker
+    container_name: sentinel-gpu-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    network_mode: host
+    environment:
+      GPU_REDIS_HOST: 127.0.0.1
+      GPU_REDIS_LOCAL_PORT: ${GPU_REDIS_LOCAL_PORT:-6380}
+      GPU_WORKER_NAME: ${GPU_WORKER_NAME:-sentinel-gpu-01}
+      GPU_QUEUE: gpu
+      GPU_DEVICE: ${GPU_DEVICE:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      NVIDIA_VISIBLE_DEVICES: ${GPU_DEVICE:-0}
+    volumes:
+      - ${AI_MODEL_CACHE:?set AI_MODEL_CACHE}:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_DEVICE:-0}"]
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-m", "app.jobs.gpu.health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 25s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

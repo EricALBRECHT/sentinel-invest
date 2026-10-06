@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -108,17 +108,77 @@ async def list_universe(
     status: str | None = None,
     source: str | None = None,
     active: bool | None = None,
+    search: str | None = None,
+    statuses: list[str] | None = None,
+    require_membership: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Company]:
+    statement = _universe_statement(
+        universe_name=universe_name,
+        status=status,
+        source=source,
+        active=active,
+        search=search,
+        statuses=statuses,
+        require_membership=require_membership,
+    )
+    statement = statement.order_by(Company.universe_priority.desc(), Company.id.asc())
+    statement = statement.offset(offset).limit(limit)
+    return list((await session.execute(statement)).scalars().all())
+
+
+async def count_universe(
+    session: AsyncSession,
+    *,
+    universe_name: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    active: bool | None = None,
+    search: str | None = None,
+    statuses: list[str] | None = None,
+    require_membership: bool | None = None,
+) -> int:
+    statement = select(func.count()).select_from(
+        _universe_statement(
+            universe_name=universe_name,
+            status=status,
+            source=source,
+            active=active,
+            search=search,
+            statuses=statuses,
+            require_membership=require_membership,
+        ).subquery()
+    )
+    return int((await session.execute(statement)).scalar_one())
+
+
+def _universe_statement(
+    *,
+    universe_name: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    active: bool | None = None,
+    search: str | None = None,
+    statuses: list[str] | None = None,
+    require_membership: bool | None = None,
+):
     name = normalize_universe_name(universe_name) if universe_name else None
     origin = normalize_source(source) if source else None
     if status:
         from app.services.universe.rules import normalize_status
 
         status = normalize_status(status)
+    normalized_statuses = None
+    if statuses:
+        from app.services.universe.rules import normalize_status
+
+        normalized_statuses = [normalize_status(item) for item in statuses]
     statement = select(Company)
-    if active is not False or name or origin:
+    must_join = require_membership
+    if must_join is None:
+        must_join = active is not False or name is not None or origin is not None
+    if must_join:
         membership = select(UniverseMembership.id).where(UniverseMembership.company_id == Company.id)
         if active is not False:
             membership = membership.where(UniverseMembership.is_active.is_(True))
@@ -129,11 +189,15 @@ async def list_universe(
         statement = statement.where(membership.exists())
     if status:
         statement = statement.where(Company.universe_status == status)
+    if normalized_statuses:
+        statement = statement.where(Company.universe_status.in_(normalized_statuses))
     if active is not None:
         statement = statement.where(Company.is_active.is_(active))
-    statement = statement.order_by(Company.universe_priority.desc(), Company.id.asc())
-    statement = statement.offset(offset).limit(limit)
-    return list((await session.execute(statement)).scalars().all())
+    needle = (search or "").strip()
+    if needle:
+        pattern = f"%{needle}%"
+        statement = statement.where(or_(Company.ticker.ilike(pattern), Company.name.ilike(pattern)))
+    return statement
 
 
 async def get_company_universes(

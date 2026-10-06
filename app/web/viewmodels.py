@@ -18,8 +18,11 @@ from app.models.supply_chain import DiscoveredCompany
 from app.models.technical_snapshot import TechnicalSnapshot
 from app.models.universe_membership import UniverseMembership
 from app.services.admin.status import build_admin_status
+from app.services.gpu.workers import gpu_workers_for_page
 from app.services.intelligence.documents import intelligence_counts
 from app.services.supply_chain.graph import get_company_graph
+from app.services.universe.bootstrap import completeness_for, universe_market_status
+from app.services.universe.manager import count_universe, list_universe
 from app.web.i18n import format_date, format_number, label_relationship_status, label_relationship_type
 
 _STATUS_ORDER = {
@@ -30,6 +33,8 @@ _STATUS_ORDER = {
     "DISCOVERED": 4,
     "ARCHIVED": 5,
 }
+_DASHBOARD_DEFAULT = ("PORTFOLIO", "DEEP_ANALYSIS", "WATCHED", "DISCOVERED")
+_DASHBOARD_PAGE_SIZE = 50
 _RANGES = {"3M": 92, "6M": 183, "1Y": 366, "3Y": 1095, "5Y": 1826, "MAX": None}
 _GOOD = frozenset(
     {"HIGH", "VERY_HIGH", "STRONG", "CONFIRMED", "VERIFIED", "COMPLETE", "USABLE", "GOOD", "ANALYZED", "PUBLIC_COMPANY"}
@@ -120,19 +125,50 @@ def display_compact(value: object) -> str:
     return format_number(number, 0)
 
 
-async def dashboard_page(session: AsyncSession, universe_status: str | None) -> dict:
-    companies = list(
-        (await session.scalars(select(Company).where(Company.is_active.is_(True)))).all()
+async def dashboard_page(
+    session: AsyncSession,
+    universe_status: str | None,
+    *,
+    search: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> dict:
+    page_size = _DASHBOARD_PAGE_SIZE if limit is None else max(1, min(200, limit))
+    page_offset = max(0, offset)
+    statuses = None if universe_status else list(_DASHBOARD_DEFAULT)
+    status = universe_status or None
+    companies = await list_universe(
+        session,
+        status=status,
+        statuses=statuses,
+        active=True,
+        search=search,
+        require_membership=False,
+        limit=page_size,
+        offset=page_offset,
     )
-    if universe_status:
-        companies = [company for company in companies if company.universe_status == universe_status]
-    companies.sort(key=lambda company: (_STATUS_ORDER.get(company.universe_status, 9), -int(company.universe_priority or 0), company.ticker))
+    total = await count_universe(
+        session,
+        status=status,
+        statuses=statuses,
+        active=True,
+        search=search,
+        require_membership=False,
+    )
+    companies.sort(
+        key=lambda company: (
+            _STATUS_ORDER.get(company.universe_status, 9),
+            -int(company.universe_priority or 0),
+            company.ticker,
+        )
+    )
     ids = [company.id for company in companies]
     quality = await _latest(session, CompanyScore, "score_date", ids)
     opportunity = await _latest(session, OpportunityScore, "score_date", ids)
     technical = await _latest(session, TechnicalSnapshot, "as_of_date", ids)
     views = await _latest(session, InvestmentView, "as_of_date", ids)
     snapshots = await _snapshots(session, ids)
+    completeness = await completeness_for(session, ids)
     rows = []
     for company in companies:
         view = views.get(company.id)
@@ -140,6 +176,7 @@ async def dashboard_page(session: AsyncSession, universe_status: str | None) -> 
         opp = opportunity.get(company.id)
         tech = technical.get(company.id)
         market = snapshots.get(company.id)
+        ready = completeness.get(company.id, {})
         rows.append(
             {
                 "company": company,
@@ -156,10 +193,24 @@ async def dashboard_page(session: AsyncSession, universe_status: str | None) -> 
                 "readiness_label": None if view is None else view.analysis_readiness_label,
                 "market_date": None if market is None else market.last_market_date,
                 "price": None if market is None else market.price,
+                "market_ready": ready.get("market_ready", False),
+                "sec_ready": ready.get("sec_ready", False),
             }
         )
     counts = await _summary(session)
-    return {"rows": rows, "summary": counts, "universe_status": universe_status or ""}
+    return {
+        "rows": rows,
+        "summary": counts,
+        "universe_status": universe_status or "",
+        "search": search or "",
+        "limit": page_size,
+        "offset": page_offset,
+        "total": total,
+        "has_prev": page_offset > 0,
+        "has_next": page_offset + page_size < total,
+        "prev_offset": max(0, page_offset - page_size),
+        "next_offset": page_offset + page_size,
+    }
 
 
 async def company_page(session: AsyncSession, company_id: int, chart_range: str, depth: int) -> dict | None:
@@ -328,7 +379,74 @@ async def discovery_page(
 async def admin_page(session: AsyncSession) -> dict:
     status = await build_admin_status(session)
     deepest = await session.scalar(select(func.max(Company.discovery_depth)))
-    return {"status": status, "deepest_depth": int(deepest or 0), "netdata_url": "http://192.168.1.116:19999"}
+    market = await universe_market_status(session)
+    return {
+        "status": status,
+        "deepest_depth": int(deepest or 0),
+        "netdata_url": "http://192.168.1.116:19999",
+        "gpu_workers": [present_gpu_worker(row) for row in gpu_workers_for_page()],
+        "universe_market": present_universe_market(market),
+    }
+
+
+def present_universe_market(market: dict) -> dict:
+    bootstrap = market.get("bootstrap") or {}
+    pending = int(bootstrap.get("pending_market") or 0) + int(bootstrap.get("pending_sec") or 0)
+    ready = int(bootstrap.get("ready") or 0)
+    total = pending + ready
+    progress = "—" if total == 0 else f"{ready} / {total}"
+    return {
+        "sp500_members": (market.get("SP500") or {}).get("members", 0),
+        "sp500_refresh": _gpu_moment((market.get("SP500") or {}).get("last_refresh")),
+        "nasdaq_members": (market.get("NASDAQ100") or {}).get("members", 0),
+        "nasdaq_refresh": _gpu_moment((market.get("NASDAQ100") or {}).get("last_refresh")),
+        "pending_market": bootstrap.get("pending_market", 0),
+        "pending_sec": bootstrap.get("pending_sec", 0),
+        "ready": ready,
+        "progress": progress,
+        "last_bootstrap": _gpu_moment(bootstrap.get("last_bootstrap")),
+        "max_per_run": bootstrap.get("max_per_run"),
+    }
+
+
+def present_gpu_worker(row: dict) -> dict:
+    probe = row.get("probe") if isinstance(row.get("probe"), dict) else None
+    gpu_name = row.get("gpu_name") or (probe or {}).get("gpu_name")
+    memory = row.get("gpu_memory_total")
+    if memory is None and probe is not None:
+        memory = probe.get("gpu_memory_total_mb")
+    status = str(row.get("status") or "offline")
+    return {
+        "name": row.get("name") or "—",
+        "presence_label": "En ligne" if row.get("online") else "Hors ligne",
+        "presence_tone": "good" if row.get("online") else "bad",
+        "gpu_name": gpu_name or "—",
+        "memory_label": f"{int(memory)} Mo" if isinstance(memory, int) else "—",
+        "heartbeat_label": _gpu_moment(row.get("last_heartbeat")),
+        "status_label": {"online": "En ligne", "offline": "Hors ligne", "degraded": "GPU indisponible"}.get(status, status),
+        "probe_label": _probe_label(probe),
+    }
+
+
+def _probe_label(probe: dict | None) -> str:
+    if not probe:
+        return "—"
+    when = _gpu_moment(probe.get("timestamp"))
+    if probe.get("gpu_available"):
+        name = probe.get("gpu_name") or "GPU"
+        return f"{name} · {when}"
+    return f"indisponible · {when}"
+
+
+def _gpu_moment(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    local = moment.astimezone()
+    return local.strftime("%d/%m/%Y %H:%M")
 
 
 def proposed_role(reason: str | None) -> str:

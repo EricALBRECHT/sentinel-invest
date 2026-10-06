@@ -1,4 +1,5 @@
 <div id="company-table">
+  <p class="muted">{{ total }} société{% if total != 1 %}s{% endif %} · page {{ ((offset // limit) + 1) if limit else 1 }}</p>
   <table>
     <thead>
       <tr>
@@ -39,4 +40,18 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if has_prev or has_next %}
+  <p class="ranges">
+    {% if has_prev %}
+    <a href="/dashboard?universe_status={{ universe_status }}&q={{ search }}&limit={{ limit }}&offset={{ prev_offset }}"
+       hx-get="/dashboard?universe_status={{ universe_status }}&q={{ search }}&limit={{ limit }}&offset={{ prev_offset }}"
+       hx-target="#company-table" hx-swap="outerHTML" hx-push-url="true">Précédent</a>
+    {% endif %}
+    {% if has_next %}
+    <a href="/dashboard?universe_status={{ universe_status }}&q={{ search }}&limit={{ limit }}&offset={{ next_offset }}"
+       hx-get="/dashboard?universe_status={{ universe_status }}&q={{ search }}&limit={{ limit }}&offset={{ next_offset }}"
+       hx-target="#company-table" hx-swap="outerHTML" hx-push-url="true">Suivant</a>
+    {% endif %}
+  </p>
+  {% endif %}
 </div>

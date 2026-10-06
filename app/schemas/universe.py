@@ -40,6 +40,7 @@ class UniverseListRead(BaseModel):
     items: list[UniverseCompanyRead]
     limit: int
     offset: int
+    total: int
 
 
 class PriorityRead(BaseModel):
@@ -55,3 +56,47 @@ class UniverseImportRead(BaseModel):
     existing_companies: int
     memberships_added: int
     memberships_existing: int
+
+
+class UniverseIndexRefreshRead(BaseModel):
+    universe: str
+    provider: str
+    source_documentation: str
+    fetched: int
+    created_companies: int
+    existing_companies: int
+    memberships_added: int
+    memberships_existing: int
+    memberships_removed: int
+    multi_universe_companies: int
+    multi_universe_delta: int
+    last_refresh: str
+
+
+class UniverseBootstrapRead(BaseModel):
+    selected: int
+    market_enqueued: int
+    sec_enqueued: int
+    already_active: int
+    job_ids: list[str]
+    limit: int
+    last_bootstrap: str
+
+
+class UniverseIndexStatusRead(BaseModel):
+    members: int
+    last_refresh: str | None
+
+
+class UniverseBootstrapStatusRead(BaseModel):
+    pending_market: int
+    pending_sec: int
+    ready: int
+    last_bootstrap: str | None = None
+    max_per_run: int | None = None
+
+
+class UniverseMarketStatusRead(BaseModel):
+    SP500: UniverseIndexStatusRead
+    NASDAQ100: UniverseIndexStatusRead
+    bootstrap: UniverseBootstrapStatusRead

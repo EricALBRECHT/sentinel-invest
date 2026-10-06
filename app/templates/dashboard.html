@@ -17,12 +17,17 @@
       hx-get="/dashboard" hx-target="#company-table" hx-swap="outerHTML" hx-push-url="true">
   <label>Univers
     <select name="universe_status" data-auto-submit>
-      <option value="">Tous</option>
+      <option value="">Suivi (hors filtrées)</option>
       {% for status in ["PORTFOLIO", "DEEP_ANALYSIS", "WATCHED", "SCREENED", "DISCOVERED", "ARCHIVED"] %}
       <option value="{{ status }}" {% if universe_status == status %}selected{% endif %}>{{ label_universe_status(status) }}</option>
       {% endfor %}
     </select>
   </label>
+  <label>Recherche
+    <input type="search" name="q" value="{{ search }}" placeholder="Nom ou ticker" hx-get="/dashboard" hx-target="#company-table" hx-swap="outerHTML" hx-push-url="true" hx-trigger="keyup changed delay:300ms">
+  </label>
+  <input type="hidden" name="limit" value="{{ limit }}">
+  <input type="hidden" name="offset" value="0">
 </form>
 {% include "partials/dashboard_table.html" %}
 {% endblock %}

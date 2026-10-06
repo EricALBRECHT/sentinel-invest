@@ -211,6 +211,7 @@ async def test_universe_routes_filters_import_and_admin(client):
     assert [item["ticker"] for item in sp500.json()["items"]] == ["ACME"]
     assert [item["ticker"] for item in pea.json()["items"]] == ["BETA"]
     assert len(page.json()["items"]) == 1
+    assert page.json()["total"] == 2
     assert {item["universe_name"] for item in universes.json()} == {"SP500", "NASDAQ100"}
     assert removed.status_code == 200
     assert removed.json()["is_active"] is False

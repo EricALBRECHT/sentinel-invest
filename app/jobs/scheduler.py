@@ -12,6 +12,8 @@ from app.jobs.market_sync import enqueue_due_market_syncs
 from app.jobs.queues import (
     enqueue_discovery_expansion_batch,
     enqueue_discovery_verification_batch,
+    enqueue_universe_bootstrap,
+    enqueue_universe_members_refresh,
     enqueue_universe_priorities,
 )
 
@@ -53,6 +55,16 @@ def run_discovery_expansion_scan() -> dict:
     return enqueue_discovery_expansion_batch()
 
 
+def run_universe_members_refresh() -> dict:
+    """Weekly index membership refresh. Wikipedia is fetched by the worker."""
+    return enqueue_universe_members_refresh()
+
+
+def run_universe_bootstrap_scan() -> dict:
+    """Hourly bootstrap tick. At most UNIVERSE_BOOTSTRAP_MAX_PER_RUN companies."""
+    return enqueue_universe_bootstrap()
+
+
 def main() -> None:
     configure_job_logging()
     sec_interval = max(1, settings.sec_sync_scan_hours) * 3600
@@ -62,6 +74,8 @@ def main() -> None:
     supply_interval = max(1, settings.supply_chain_scan_hours) * 3600
     discovery_interval = max(1, settings.discovery_verify_scan_hours) * 3600
     expansion_interval = max(1, settings.discovery_expansion_scan_hours) * 3600
+    members_interval = max(1, settings.universe_members_refresh_days) * 24 * 3600
+    bootstrap_interval = max(1, settings.universe_bootstrap_scan_hours) * 3600
     logger.info(
         "scheduler_started scan_interval_seconds=%s sync_interval_hours=%s max_companies=%s priority_interval_seconds=%s market_interval_seconds=%s",
         sec_interval,
@@ -79,6 +93,8 @@ def main() -> None:
     next_supply = time.monotonic() + supply_interval
     next_discovery = time.monotonic() + discovery_interval
     next_expansion = time.monotonic() + expansion_interval
+    next_members = time.monotonic() + members_interval
+    next_bootstrap = time.monotonic() + bootstrap_interval
     while True:
         now = time.monotonic()
         if now >= next_sec:
@@ -123,6 +139,18 @@ def main() -> None:
             except Exception as exc:
                 logger.warning("scheduler_discovery_expansion_failed error_type=%s", type(exc).__name__)
             next_expansion = time.monotonic() + expansion_interval
+        if now >= next_members:
+            try:
+                run_universe_members_refresh()
+            except Exception as exc:
+                logger.warning("scheduler_universe_members_failed error_type=%s", type(exc).__name__)
+            next_members = time.monotonic() + members_interval
+        if now >= next_bootstrap:
+            try:
+                run_universe_bootstrap_scan()
+            except Exception as exc:
+                logger.warning("scheduler_universe_bootstrap_failed error_type=%s", type(exc).__name__)
+            next_bootstrap = time.monotonic() + bootstrap_interval
         wait = min(
             next_sec,
             next_priority,
@@ -131,6 +159,8 @@ def main() -> None:
             next_supply,
             next_discovery,
             next_expansion,
+            next_members,
+            next_bootstrap,
         ) - time.monotonic()
         time.sleep(min(5.0, max(0.2, wait)))
 

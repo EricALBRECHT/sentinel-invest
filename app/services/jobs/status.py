@@ -65,6 +65,13 @@ _PUBLIC_RESULT_KEYS = frozenset(
         "market_symbol",
         "sec_sync_enqueued",
         "market_sync_enqueued",
+        "worker",
+        "gpu_available",
+        "gpu_name",
+        "gpu_memory_total_mb",
+        "gpu_memory_free_mb",
+        "cuda_visible",
+        "timestamp",
     }
 )
 

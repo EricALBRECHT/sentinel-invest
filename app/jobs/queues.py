@@ -17,7 +17,8 @@ QUEUE_SEC = "sec"
 QUEUE_ANALYSIS = "analysis"
 QUEUE_MARKET = "market"
 QUEUE_INTELLIGENCE = "intelligence"
-QUEUE_NAMES = (QUEUE_DEFAULT, QUEUE_SEC, QUEUE_ANALYSIS, QUEUE_MARKET, QUEUE_INTELLIGENCE)
+QUEUE_GPU = "gpu"
+QUEUE_NAMES = (QUEUE_DEFAULT, QUEUE_SEC, QUEUE_ANALYSIS, QUEUE_MARKET, QUEUE_INTELLIGENCE, QUEUE_GPU)
 
 _ACTIVE = frozenset({"queued", "started", "deferred", "scheduled"})
 
@@ -289,6 +290,14 @@ def discovery_expansion_batch_job_id() -> str:
     return "expand-discovered-companies"
 
 
+def universe_members_refresh_job_id() -> str:
+    return "universe-members-refresh"
+
+
+def universe_bootstrap_job_id() -> str:
+    return "universe-bootstrap-data"
+
+
 def enqueue_discovery_expansion(company_id: int) -> dict:
     return enqueue_call(
         QUEUE_INTELLIGENCE,
@@ -310,6 +319,26 @@ def enqueue_discovery_expansion_batch() -> dict:
     )
 
 
+def enqueue_universe_members_refresh() -> dict:
+    return enqueue_call(
+        QUEUE_DEFAULT,
+        "app.jobs.universe.refresh_universe_members",
+        job_id=universe_members_refresh_job_id(),
+        retry=score_retry(),
+        timeout=900,
+    )
+
+
+def enqueue_universe_bootstrap() -> dict:
+    return enqueue_call(
+        QUEUE_DEFAULT,
+        "app.jobs.universe.bootstrap_universe_data_job",
+        job_id=universe_bootstrap_job_id(),
+        retry=score_retry(),
+        timeout=300,
+    )
+
+
 def enqueue_discovery_verification_batch() -> dict:
     return enqueue_call(
         QUEUE_INTELLIGENCE,
@@ -317,6 +346,20 @@ def enqueue_discovery_verification_batch() -> dict:
         job_id=discovery_verification_batch_job_id(),
         retry=intelligence_retry(),
         timeout=180,
+    )
+
+
+def gpu_probe_job_id() -> str:
+    return "gpu-system-probe"
+
+
+def enqueue_gpu_probe() -> dict:
+    return enqueue_call(
+        QUEUE_GPU,
+        "app.jobs.gpu.probe.gpu_system_probe",
+        job_id=gpu_probe_job_id(),
+        retry=Retry(max=1, interval=[15]),
+        timeout=60,
     )
 
 

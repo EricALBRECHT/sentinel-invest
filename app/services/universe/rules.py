@@ -73,10 +73,23 @@ def normalize_status(value: str) -> str:
     return status
 
 
+_STATUS_RANK = {
+    "ARCHIVED": 0,
+    "DISCOVERED": 1,
+    "SCREENED": 2,
+    "WATCHED": 3,
+    "DEEP_ANALYSIS": 4,
+    "PORTFOLIO": 5,
+}
+
+
 def status_after_add(current: str, requested: str | None) -> str:
-    """Adding a company follows it. A higher pipeline status stays in place."""
+    """Adding a company never lowers a higher pipeline status."""
     if requested:
-        return normalize_status(requested)
+        wanted = normalize_status(requested)
+        if _STATUS_RANK[wanted] >= _STATUS_RANK.get(current, 1):
+            return wanted
+        return current
     if current in {"DISCOVERED", "ARCHIVED"}:
         return "WATCHED"
     return current

@@ -156,10 +156,13 @@ async def logout() -> RedirectResponse:
 async def dashboard(
     request: Request,
     universe_status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     user = await page_user(request, db)
-    page = await viewmodels.dashboard_page(db, universe_status)
+    page = await viewmodels.dashboard_page(db, universe_status, search=q, limit=limit, offset=offset)
     context = {"request": request, "user": user, **page}
     if request.headers.get("HX-Request") == "true":
         return templates.TemplateResponse(request, "partials/dashboard_table.html", context)
@@ -217,3 +220,30 @@ async def admin_view(request: Request, db: AsyncSession = Depends(get_db)):
     if request.headers.get("HX-Request") == "true":
         return templates.TemplateResponse(request, "partials/admin_status.html", context)
     return templates.TemplateResponse(request, "admin.html", context)
+
+
+@router.post("/admin/view/refresh-sp500")
+async def admin_refresh_sp500(request: Request, db: AsyncSession = Depends(get_db)):
+    await page_user(request, db)
+    from app.services.universe.refresh import refresh_sp500
+
+    await refresh_sp500(db)
+    return RedirectResponse("/admin/view", status_code=303)
+
+
+@router.post("/admin/view/refresh-nasdaq100")
+async def admin_refresh_nasdaq100(request: Request, db: AsyncSession = Depends(get_db)):
+    await page_user(request, db)
+    from app.services.universe.refresh import refresh_nasdaq100
+
+    await refresh_nasdaq100(db)
+    return RedirectResponse("/admin/view", status_code=303)
+
+
+@router.post("/admin/view/bootstrap")
+async def admin_bootstrap(request: Request, db: AsyncSession = Depends(get_db)):
+    await page_user(request, db)
+    from app.services.universe.bootstrap import bootstrap_universe_data
+
+    await bootstrap_universe_data(db)
+    return RedirectResponse("/admin/view", status_code=303)

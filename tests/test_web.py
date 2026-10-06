@@ -287,6 +287,9 @@ async def test_dashboard_company_discovery_and_admin(client, session_factory):
     assert "Exploitable" in dashboard.text
     assert "Partielle" in dashboard.text
     assert "05/10/2026" in dashboard.text
+    searched = await client.get("/dashboard", params={"q": "NVIDIA"})
+    assert "NVIDIA Corporation" in searched.text
+    assert "CoreWeave" not in searched.text
     filtered = await client.get("/dashboard", headers={"HX-Request": "true"}, params={"universe_status": "WATCHED"})
     assert "NVDA" in filtered.text
     assert "CRWV" not in filtered.text
@@ -343,6 +346,7 @@ async def test_dashboard_company_discovery_and_admin(client, session_factory):
     _assert_local_html(admin)
     assert "Redis" in admin.text
     assert "Expansion de découverte" in admin.text
+    assert "Univers de marché" in admin.text
     assert "En attente" in admin.text
     assert "Ouvrir Netdata" in admin.text
     assert "http://192.168.1.116:19999" in admin.text

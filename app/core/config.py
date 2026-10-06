@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     sec_sync_max_companies_per_run: int = 50
     universe_priority_interval_hours: int = 24
     universe_stale_days: int = 365
+    universe_user_agent: str = (
+        "SentinelResearchBot/1.0 (universe-importer; contact@example.com)"
+    )
+    universe_timeout_seconds: float = 30.0
+    universe_max_retries: int = 3
+    universe_min_interval_seconds: float = 1.0
+    universe_bootstrap_max_per_run: int = 25
+    universe_members_refresh_days: int = 7
+    universe_bootstrap_scan_hours: int = 1
     market_provider: str = "yahoo"
     market_user_agent: str = "Sentinel market-data contact@example.com"
     market_timeout_seconds: float = 30.0
