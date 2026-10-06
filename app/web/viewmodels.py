@@ -24,6 +24,18 @@ from app.services.supply_chain.graph import get_company_graph
 from app.services.universe.bootstrap import completeness_for, universe_market_status
 from app.services.universe.manager import count_universe, list_universe
 from app.web.i18n import format_date, format_number, label_relationship_status, label_relationship_type
+from app.web.polling import poll_context
+
+
+def refreshed_stamp() -> str:
+    return datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
+
+
+def live_meta() -> dict:
+    data = poll_context()
+    data["refreshed_at"] = refreshed_stamp()
+    data["auto_refresh"] = True
+    return data
 
 _STATUS_ORDER = {
     "PORTFOLIO": 0,
@@ -147,6 +159,7 @@ async def dashboard_page(
     search: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    include_live: bool = True,
 ) -> dict:
     page_size = _DASHBOARD_PAGE_SIZE if limit is None else max(1, min(200, limit))
     page_offset = max(0, offset)
@@ -213,7 +226,7 @@ async def dashboard_page(
             }
         )
     counts = await _summary(session)
-    return {
+    payload = {
         "rows": rows,
         "summary": counts,
         "universe_status": universe_status or "",
@@ -226,6 +239,70 @@ async def dashboard_page(
         "prev_offset": max(0, page_offset - page_size),
         "next_offset": page_offset + page_size,
     }
+    payload.update(live_meta())
+    if include_live:
+        live = await dashboard_live_panels(session)
+        payload.update(live)
+    return payload
+
+
+async def dashboard_summary_fragment(session: AsyncSession) -> dict:
+    data = {"summary": await _summary(session)}
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_live_panels(session: AsyncSession) -> dict:
+    """Read-only job / bootstrap / GPU strips for the dashboard."""
+    jobs = await dashboard_jobs_fragment(session)
+    bootstrap = await dashboard_bootstrap_fragment(session)
+    gpu = await dashboard_gpu_fragment(session)
+    return {
+        "jobs_live": jobs["jobs_live"],
+        "universe_market": bootstrap["universe_market"],
+        "gpu_workers": gpu["gpu_workers"],
+        "gpu_online": gpu["gpu_online"],
+    }
+
+
+async def dashboard_jobs_fragment(session: AsyncSession) -> dict:
+    jobs = await _safe_job_counts()
+    data = {
+        "jobs_live": {
+            "queued": None if jobs is None else jobs.get("queued"),
+            "started": None if jobs is None else jobs.get("started"),
+            "failed": None if jobs is None else jobs.get("failed"),
+            "finished_recent": None if jobs is None else jobs.get("finished_recent"),
+        }
+    }
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_bootstrap_fragment(session: AsyncSession) -> dict:
+    market = await universe_market_status(session)
+    data = {"universe_market": present_universe_market(market)}
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_gpu_fragment(session: AsyncSession) -> dict:
+    workers = [present_gpu_worker(row) for row in gpu_workers_for_page()]
+    online = sum(1 for row in workers if row.get("presence_tone") == "good")
+    data = {"gpu_workers": workers, "gpu_online": online}
+    data.update(live_meta())
+    return data
+
+
+async def _safe_job_counts() -> dict | None:
+    import asyncio
+
+    from app.services.jobs.status import collect_job_counts
+
+    try:
+        return await asyncio.to_thread(collect_job_counts)
+    except Exception:
+        return None
 
 
 async def company_page(session: AsyncSession, company_id: int, chart_range: str, depth: int) -> dict | None:
@@ -398,7 +475,7 @@ async def admin_page(session: AsyncSession) -> dict:
     deepest = await session.scalar(select(func.max(Company.discovery_depth)))
     market = await universe_market_status(session)
     ai_status = await admin_ai_status(session)
-    return {
+    payload = {
         "status": status,
         "deepest_depth": int(deepest or 0),
         "netdata_url": "http://192.168.1.116:19999",
@@ -406,6 +483,47 @@ async def admin_page(session: AsyncSession) -> dict:
         "universe_market": present_universe_market(market),
         "ai_status": present_ai_status(ai_status),
     }
+    payload.update(live_meta())
+    return payload
+
+
+async def admin_jobs_fragment(session: AsyncSession) -> dict:
+    status = await build_admin_status(session)
+    data = {"status": status}
+    data.update(live_meta())
+    return data
+
+
+async def admin_bootstrap_fragment(session: AsyncSession) -> dict:
+    market = await universe_market_status(session)
+    data = {"universe_market": present_universe_market(market)}
+    data.update(live_meta())
+    return data
+
+
+async def admin_gpu_fragment(session: AsyncSession) -> dict:
+    from app.services.ai.service import admin_ai_status
+
+    data = {
+        "gpu_workers": [present_gpu_worker(row) for row in gpu_workers_for_page()],
+        "ai_status": present_ai_status(await admin_ai_status(session)),
+    }
+    data.update(live_meta())
+    return data
+
+
+async def admin_overview_fragment(session: AsyncSession) -> dict:
+    status = await build_admin_status(session)
+    deepest = await session.scalar(select(func.max(Company.discovery_depth)))
+    from app.services.ai.service import admin_ai_status
+
+    data = {
+        "status": status,
+        "deepest_depth": int(deepest or 0),
+        "ai_status": present_ai_status(await admin_ai_status(session)),
+    }
+    data.update(live_meta())
+    return data
 
 
 def present_ai_status(status: dict) -> dict:

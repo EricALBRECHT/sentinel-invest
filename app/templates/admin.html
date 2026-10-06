@@ -1,15 +1,26 @@
 {% extends "base.html" %}
 {% block title %}Administration — Sentinel{% endblock %}
 {% block content %}
-<h1>Administration</h1>
-<p>
-  <button type="button" hx-get="/admin/view" hx-target="#admin-status" hx-swap="outerHTML">Rafraîchir</button>
-  <a class="text-link" href="{{ netdata_url }}" rel="noopener noreferrer">Ouvrir Netdata</a>
-</p>
+<div class="page-toolbar">
+  <h1>Administration</h1>
+  <div class="live-controls">
+    <button type="button" id="sentinel-refresh" data-sentinel-refresh>Actualiser</button>
+    <a class="text-link" href="{{ netdata_url }}" rel="noopener noreferrer">Ouvrir Netdata</a>
+    <span class="live-meta" id="sentinel-live-meta" data-refreshed-at="{{ refreshed_at }}">
+      <span class="live-label">Actualisation automatique</span>
+      <span class="live-auto">Auto : activée</span>
+      <span class="live-stamp">Dernière mise à jour : <time id="sentinel-last-update">{{ refreshed_at }}</time></span>
+      <span class="live-status" id="sentinel-live-status" hidden></span>
+    </span>
+  </div>
+</div>
 <div class="filters">
   <form method="post" action="/admin/view/refresh-sp500"><button type="submit">Rafraîchir S&amp;P 500</button></form>
   <form method="post" action="/admin/view/refresh-nasdaq100"><button type="submit">Rafraîchir Nasdaq-100</button></form>
   <form method="post" action="/admin/view/bootstrap"><button type="submit">Lancer bootstrap</button></form>
 </div>
-{% include "partials/admin_status.html" %}
+{% include "partials/admin_jobs.html" %}
+{% include "partials/admin_bootstrap.html" %}
+{% include "partials/admin_gpu.html" %}
+{% include "partials/admin_overview.html" %}
 {% endblock %}

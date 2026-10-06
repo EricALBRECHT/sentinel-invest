@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.jobs.ai_document import run_ai_document_analysis
-from app.jobs.queues import ai_document_job_id, enqueue_ai_document_analysis, redis_connection
+from app.jobs.queues import enqueue_ai_document_analysis, redis_connection
 from app.models.ai_document_analysis import AiDocumentAnalysis
 from app.models.company import Company
 from app.models.company_score import CompanyScore
@@ -222,12 +222,266 @@ def test_existing_success_is_skipped(session_factory):
     assert second.get("skipped") is True
 
 
+def test_existing_success_force_true_relaunches(session_factory, monkeypatch):
+    import asyncio
+
+    _, document_id = asyncio.run(_seed_document(session_factory))
+    first = run_ai_document_analysis(document_id)
+    assert first["status"] == "SUCCESS"
+    assert first.get("skipped") is not True
+
+    calls = {"n": 0}
+
+    def tracking_inference(payload):
+        calls["n"] += 1
+        from app.jobs.gpu.ai_document import analyze_document_payload
+
+        return analyze_document_payload(payload)
+
+    monkeypatch.setattr("app.jobs.ai_document.run_inference", tracking_inference)
+    monkeypatch.setattr("app.services.ai.service.run_inference", tracking_inference)
+    forced = run_ai_document_analysis(document_id, force=True)
+    assert forced.get("skipped") is False
+    assert forced["status"] == "SUCCESS"
+    assert calls["n"] == 1
+
+    async def _rows():
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(AiDocumentAnalysis).where(AiDocumentAnalysis.document_id == document_id)
+                )
+            ).scalars().all()
+            return rows
+
+    rows = asyncio.run(_rows())
+    assert len(rows) == 1
+    assert rows[0].status == "SUCCESS"
+
+
+def test_stub_success_with_local_provider_relaunches_without_force(session_factory, monkeypatch):
+    import asyncio
+
+    from app.services.ai.service import ensure_analysis_row, finalize_from_gpu_result
+
+    _, document_id = asyncio.run(_seed_document(session_factory))
+
+    async def _seed_stub():
+        async with session_factory() as session:
+            row = await ensure_analysis_row(session, document_id)
+            await session.commit()
+            row_id = row.id
+        async with session_factory() as session:
+            row = await session.get(AiDocumentAnalysis, row_id)
+            await finalize_from_gpu_result(
+                session,
+                row,
+                {
+                    "ok": True,
+                    "raw_output": json.dumps(_VALID),
+                    "worker_name": "stub",
+                    "model_backend": "stub",
+                    "duration_ms": 10,
+                },
+            )
+            await session.commit()
+
+    asyncio.run(_seed_stub())
+    monkeypatch.setattr(settings, "ai_provider", "local")
+    calls = {"n": 0}
+
+    def tracking_inference(payload):
+        calls["n"] += 1
+        return {
+            "ok": True,
+            "raw_output": json.dumps(_VALID),
+            "worker_name": "sentinel-gpu-01",
+            "model_backend": "CUDA",
+            "gpu_layers": 20,
+            "duration_ms": 50,
+        }
+
+    monkeypatch.setattr("app.jobs.ai_document.run_inference", tracking_inference)
+    result = run_ai_document_analysis(document_id, force=False)
+    assert result.get("skipped") is False
+    assert result["status"] == "SUCCESS"
+    assert calls["n"] == 1
+
+
+def test_force_true_enqueues_new_run_after_finished(job_redis):
+    first = enqueue_ai_document_analysis(99, force=False)
+    assert first["enqueued"] is True
+    assert first["job_id"].startswith("ai-document-99-")
+    job = __import__("rq.job", fromlist=["Job"]).Job.fetch(first["job_id"], connection=job_redis)
+    assert job.args == (99,)
+    assert job.kwargs.get("force") is False
+    assert job.meta.get("document_id") == 99
+    assert job.meta.get("run_id")
+
+    job.set_status("finished")
+    job.save()
+
+    forced = enqueue_ai_document_analysis(99, force=True)
+    assert forced["enqueued"] is True
+    assert forced["job_id"] != first["job_id"]
+    assert forced["job_id"].startswith("ai-document-99-")
+    job2 = __import__("rq.job", fromlist=["Job"]).Job.fetch(forced["job_id"], connection=job_redis)
+    assert job2.kwargs.get("force") is True
+    assert job2.kwargs.get("run_id")
+    assert job2.meta.get("run_id") == job2.kwargs.get("run_id")
+
+
+def test_no_duplicate_active_job_even_with_force(job_redis):
+    first = enqueue_ai_document_analysis(77, force=True)
+    assert first["enqueued"] is True
+    job = __import__("rq.job", fromlist=["Job"]).Job.fetch(first["job_id"], connection=job_redis)
+    job.set_status("started")
+    job.save()
+    second = enqueue_ai_document_analysis(77, force=True)
+    assert second["enqueued"] is False
+    assert second["status"] == "started"
+    assert second["job_id"] == first["job_id"]
+
+
 def test_duplicate_job_enqueue(job_redis):
     first = enqueue_ai_document_analysis(42)
     second = enqueue_ai_document_analysis(42)
     assert first["enqueued"] is True
     assert second["enqueued"] is False
-    assert first["job_id"] == ai_document_job_id(42)
+    assert first["job_id"].startswith("ai-document-42-")
+    assert second["job_id"] == first["job_id"]
+
+
+def test_two_successive_runs_after_finished(job_redis):
+    first = enqueue_ai_document_analysis(55, force=True)
+    job = __import__("rq.job", fromlist=["Job"]).Job.fetch(first["job_id"], connection=job_redis)
+    job.set_status("finished")
+    job.save()
+    second = enqueue_ai_document_analysis(55, force=True)
+    assert second["enqueued"] is True
+    assert second["job_id"] != first["job_id"]
+
+
+def test_gpu_enqueue_unique_id_without_retry(job_redis):
+    from app.jobs.ai_document import enqueue_ai_document_gpu
+    from rq.job import Job
+
+    first = enqueue_ai_document_gpu({"document_id": 3, "run_id": "abc12345", "content_text": "x"})
+    assert first["enqueued"] is True
+    assert first["job_id"] == "ai-gpu-document-3-abc12345"
+    job = Job.fetch(first["job_id"], connection=job_redis)
+    assert getattr(job, "retries_left", None) in (None, 0)
+    second = enqueue_ai_document_gpu({"document_id": 3, "run_id": "deadbeef", "content_text": "y"})
+    assert second["enqueued"] is True
+    assert second["job_id"] == "ai-gpu-document-3-deadbeef"
+    assert second["job_id"] != first["job_id"]
+
+
+def test_force_true_enqueues_gpu_queue(job_redis, session_factory, monkeypatch):
+    import asyncio
+
+    from app.jobs.ai_document import run_ai_document_analysis
+    from rq.job import Job
+
+    monkeypatch.setattr(settings, "ai_provider", "local")
+    _, document_id = asyncio.run(_seed_document(session_factory))
+    seen = {}
+
+    def fake_wait(job_id, timeout=900):
+        job = Job.fetch(job_id, connection=job_redis)
+        seen["gpu_job_id"] = job_id
+        seen["status"] = job.get_status()
+        return {
+            "ok": True,
+            "raw_output": json.dumps(_VALID),
+            "worker_name": "sentinel-gpu-01",
+            "model_backend": "CUDA",
+            "gpu_layers": 20,
+            "duration_ms": 12,
+            "run_id": job.meta.get("run_id"),
+        }
+
+    monkeypatch.setattr("app.jobs.ai_document.wait_for_rq_job", fake_wait)
+    result = run_ai_document_analysis(document_id, force=True, run_id="trace001")
+    assert result.get("skipped") is False
+    assert result["status"] == "SUCCESS"
+    assert result["run_id"] == "trace001"
+    assert seen["gpu_job_id"] == f"ai-gpu-document-{document_id}-trace001"
+    assert seen["status"] == "queued"
+    assert result["runtime"]["run_id"] == "trace001"
+
+
+def test_cleanup_stale_scheduled_legacy_job(job_redis):
+    from app.jobs.queues import (
+        QUEUE_INTELLIGENCE,
+        cleanup_stale_ai_document_job,
+        enqueue_call,
+        ai_document_legacy_job_id,
+    )
+    from rq.job import Job
+
+    legacy_id = ai_document_legacy_job_id(3)
+    queued = enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.ai_document.run_ai_document_analysis",
+        3,
+        job_id=legacy_id,
+        retry=None,
+        timeout=60,
+        force=True,
+        run_id="legacy",
+    )
+    assert queued["enqueued"] is True
+    job = Job.fetch(legacy_id, connection=job_redis)
+    job.set_status("scheduled")
+    job.save()
+    # Active scheduled legacy still blocks new enqueue
+    blocked = enqueue_ai_document_analysis(3, force=True)
+    assert blocked["enqueued"] is False
+    assert blocked["job_id"] == legacy_id
+    cleaned = cleanup_stale_ai_document_job(legacy_id)
+    assert cleaned["deleted"] is True
+    again = enqueue_ai_document_analysis(3, force=True)
+    assert again["enqueued"] is True
+    assert again["job_id"].startswith("ai-document-3-")
+
+
+def test_describe_job_exposes_scheduled_retry_fields(job_redis, monkeypatch):
+    from app.services.jobs import status as status_mod
+    from app.services.jobs.status import describe_job
+    from rq.job import Job
+
+    queued = enqueue_ai_document_analysis(8, force=True)
+    job = Job.fetch(queued["job_id"], connection=job_redis)
+    job.set_status("scheduled")
+    job.save()
+    detail = describe_job(queued["job_id"])
+    assert detail["status"] == "scheduled"
+    assert detail["document_id"] == 8
+    assert detail["run_id"]
+    assert detail["force"] is True
+
+    class FakeJob:
+        id = "ai-document-8-deadbeef"
+        origin = "intelligence"
+        enqueued_at = None
+        started_at = None
+        ended_at = None
+        result = None
+        meta = {"document_id": 8, "run_id": "deadbeef", "force": True}
+        retries_left = 1
+        exc_info = "ValueError: max: please enter a value greater than 0"
+
+        def get_status(self, refresh=True):
+            return "scheduled"
+
+    monkeypatch.setattr(status_mod.Job, "fetch", classmethod(lambda cls, job_id, connection=None: FakeJob()))
+    monkeypatch.setattr(status_mod, "_scheduled_at", lambda job, connection: "2026-10-06T19:40:00+00:00")
+    detail2 = describe_job("ai-document-8-deadbeef")
+    assert detail2["previous_error"]
+    assert "ValueError" in detail2["previous_error"]
+    assert detail2["retries_left"] == 1
+    assert detail2["scheduled_at"] == "2026-10-06T19:40:00+00:00"
 
 
 def test_invalid_output_persisted(session_factory, monkeypatch):

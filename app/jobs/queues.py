@@ -113,30 +113,52 @@ def enqueue_call(
     func_path: str,
     *args,
     job_id: str,
-    retry: Retry,
+    retry: Retry | None,
     timeout: int,
+    replace_non_started: bool = False,
+    meta: dict | None = None,
+    **func_kwargs,
 ) -> dict:
-    """Enqueue one job, or return it when that id is already queued or started."""
+    """Enqueue one job, or return it when that id is already queued or started.
+
+    When replace_non_started is True (legacy fixed ids), any non-started job with
+    the same id is deleted first so a finished/failed/scheduled retry cannot
+    block a new execution or leave a stale result.
+    """
     connection = redis_connection()
-    active = _active_job(connection, job_id)
-    if active is not None:
-        return {
-            "job_id": job_id,
-            "queue": queue_name,
-            "enqueued": False,
-            "status": active.get_status(),
-        }
-    _delete_finished(connection, job_id)
+    existing = _existing_job(connection, job_id)
+    if existing is not None:
+        status = existing.get_status(refresh=True)
+        if status == "started":
+            return {
+                "job_id": job_id,
+                "queue": queue_name,
+                "enqueued": False,
+                "status": status,
+            }
+        if status in _ACTIVE and not replace_non_started:
+            return {
+                "job_id": job_id,
+                "queue": queue_name,
+                "enqueued": False,
+                "status": status,
+            }
+        existing.delete()
     queue = Queue(queue_name, connection=connection)
-    job = queue.enqueue(
-        func_path,
-        *args,
-        job_id=job_id,
-        retry=retry,
-        job_timeout=timeout,
-        result_ttl=24 * 3600,
-        failure_ttl=7 * 24 * 3600,
-    )
+    options: dict = {
+        "job_id": job_id,
+        "job_timeout": timeout,
+        "result_ttl": 24 * 3600,
+        "failure_ttl": 7 * 24 * 3600,
+    }
+    if retry is not None:
+        options["retry"] = retry
+    if meta:
+        options["meta"] = meta
+    if func_kwargs:
+        job = queue.enqueue(func_path, args=args, kwargs=func_kwargs, **options)
+    else:
+        job = queue.enqueue(func_path, *args, **options)
     return {
         "job_id": job.id,
         "queue": queue_name,
@@ -349,24 +371,101 @@ def enqueue_discovery_verification_batch() -> dict:
     )
 
 
-def ai_document_job_id(document_id: int) -> str:
+def ai_document_run_id() -> str:
+    import uuid
+
+    return uuid.uuid4().hex[:8]
+
+
+def ai_document_job_id(document_id: int, run_id: str | None = None) -> str:
+    """Unique per-run id. Legacy fixed ids (ai-document-{id}) are still recognized as active."""
+    return f"ai-document-{document_id}-{run_id or ai_document_run_id()}"
+
+
+def ai_document_gpu_job_id(document_id: int, run_id: str | None = None) -> str:
+    return f"ai-gpu-document-{document_id}-{run_id or ai_document_run_id()}"
+
+
+def ai_document_legacy_job_id(document_id: int) -> str:
     return f"ai-document-{document_id}"
 
 
-def ai_document_gpu_job_id(document_id: int) -> str:
-    return f"ai-document-gpu-{document_id}"
+def find_active_ai_document_job(document_id: int) -> Job | None:
+    """Return a queued/started/deferred/scheduled job for this document, if any."""
+    connection = redis_connection()
+    legacy = _existing_job(connection, ai_document_legacy_job_id(document_id))
+    if legacy is not None and legacy.get_status(refresh=True) in _ACTIVE:
+        return legacy
+    prefix = f"ai-document-{document_id}-"
+    for job_id in _iter_active_job_ids(connection, QUEUE_INTELLIGENCE):
+        if not (job_id == ai_document_legacy_job_id(document_id) or job_id.startswith(prefix)):
+            continue
+        job = _existing_job(connection, job_id)
+        if job is None:
+            continue
+        if job.get_status(refresh=True) not in _ACTIVE:
+            continue
+        meta = job.meta or {}
+        if meta.get("document_id") not in (None, document_id):
+            continue
+        return job
+    return None
 
 
 def enqueue_ai_document_analysis(document_id: int, force: bool = False) -> dict:
+    active = find_active_ai_document_job(document_id)
+    if active is not None:
+        return {
+            "job_id": active.id,
+            "queue": QUEUE_INTELLIGENCE,
+            "enqueued": False,
+            "status": active.get_status(refresh=True),
+        }
+    run_id = ai_document_run_id()
+    job_id = ai_document_job_id(document_id, run_id)
+    # No automatic RQ retry: config/programming errors must not linger as scheduled.
     return enqueue_call(
         QUEUE_INTELLIGENCE,
         "app.jobs.ai_document.run_ai_document_analysis",
         document_id,
-        force,
-        job_id=ai_document_job_id(document_id),
-        retry=intelligence_retry(),
+        job_id=job_id,
+        retry=None,
         timeout=1200,
+        meta={"document_id": document_id, "run_id": run_id, "force": bool(force)},
+        force=force,
+        run_id=run_id,
     )
+
+
+def cleanup_stale_ai_document_job(job_id: str) -> dict:
+    """Safely delete a non-running AI document job (finished/failed/scheduled retry leftover)."""
+    connection = redis_connection()
+    job = _existing_job(connection, job_id)
+    if job is None:
+        return {"job_id": job_id, "deleted": False, "reason": "not_found"}
+    status = job.get_status(refresh=True)
+    if status == "started":
+        return {"job_id": job_id, "deleted": False, "reason": "started", "status": status}
+    if status == "queued":
+        return {"job_id": job_id, "deleted": False, "reason": "queued", "status": status}
+    job.delete()
+    return {"job_id": job_id, "deleted": True, "status": status}
+
+
+def _iter_active_job_ids(connection: Redis, queue_name: str):
+    from rq.registry import DeferredJobRegistry, ScheduledJobRegistry, StartedJobRegistry
+
+    queue = Queue(queue_name, connection=connection)
+    seen: set[str] = set()
+    for job_id in queue.job_ids:
+        if job_id not in seen:
+            seen.add(job_id)
+            yield job_id
+    for registry_cls in (StartedJobRegistry, ScheduledJobRegistry, DeferredJobRegistry):
+        for job_id in registry_cls(queue_name, connection=connection).get_job_ids():
+            if job_id not in seen:
+                seen.add(job_id)
+                yield job_id
 
 
 def gpu_probe_job_id() -> str:
@@ -412,19 +511,24 @@ def enqueue_technical_backfill(
 
 
 def _active_job(connection: Redis, job_id: str) -> Job | None:
-    try:
-        job = Job.fetch(job_id, connection=connection)
-    except NoSuchJobError:
+    job = _existing_job(connection, job_id)
+    if job is None:
         return None
     if job.get_status(refresh=True) in _ACTIVE:
         return job
     return None
 
 
-def _delete_finished(connection: Redis, job_id: str) -> None:
+def _existing_job(connection: Redis, job_id: str) -> Job | None:
     try:
-        job = Job.fetch(job_id, connection=connection)
+        return Job.fetch(job_id, connection=connection)
     except NoSuchJobError:
+        return None
+
+
+def _delete_finished(connection: Redis, job_id: str) -> None:
+    job = _existing_job(connection, job_id)
+    if job is None:
         return
     if job.get_status(refresh=True) not in _ACTIVE:
         job.delete()

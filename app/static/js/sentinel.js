@@ -13,8 +13,120 @@
     }
   });
 
+  document.addEventListener("click", function (event) {
+    var button = event.target && event.target.closest
+      ? event.target.closest("[data-sentinel-refresh]")
+      : null;
+    if (!button) {
+      return;
+    }
+    event.preventDefault();
+    triggerSentinelRefresh(button);
+  });
+
+  document.body.addEventListener("htmx:beforeRequest", function (event) {
+    var elt = event.target;
+    if (!elt || !elt.classList || !elt.classList.contains("sentinel-live")) {
+      return;
+    }
+    elt.classList.add("is-refreshing");
+    setLiveStatus("Actualisation…", false);
+  });
+
+  document.body.addEventListener("htmx:afterRequest", function (event) {
+    var elt = event.target;
+    if (!elt || !elt.classList || !elt.classList.contains("sentinel-live")) {
+      return;
+    }
+    elt.classList.remove("is-refreshing");
+    var detail = event.detail || {};
+    var xhr = detail.xhr;
+    if (detail.successful || (xhr && xhr.status >= 200 && xhr.status < 300)) {
+      clearRefreshBusy();
+      stampLiveUpdate();
+      setLiveStatus("", true);
+      return;
+    }
+    clearRefreshBusy();
+    setLiveStatus("Échec actualisation", false);
+  });
+
+  document.body.addEventListener("htmx:responseError", function () {
+    clearRefreshBusy();
+    setLiveStatus("Échec actualisation", false);
+  });
+
+  document.body.addEventListener("htmx:sendError", function () {
+    clearRefreshBusy();
+    setLiveStatus("Échec actualisation", false);
+  });
+
+  document.body.addEventListener("htmx:swapError", function () {
+    clearRefreshBusy();
+    setLiveStatus("Échec actualisation", false);
+  });
+
   renderCharts();
   renderMermaid();
+
+  function triggerSentinelRefresh(button) {
+    if (button) {
+      button.classList.add("is-busy");
+      button.setAttribute("aria-busy", "true");
+      if (!button.getAttribute("data-label")) {
+        button.setAttribute("data-label", button.textContent || "Actualiser");
+      }
+      button.textContent = "Actualisation…";
+    }
+    setLiveStatus("Actualisation…", false);
+    document.body.dispatchEvent(new CustomEvent("sentinelRefresh", { bubbles: true }));
+  }
+
+  function clearRefreshBusy() {
+    var buttons = document.querySelectorAll("[data-sentinel-refresh]");
+    for (var i = 0; i < buttons.length; i += 1) {
+      var button = buttons[i];
+      button.classList.remove("is-busy");
+      button.removeAttribute("aria-busy");
+      var label = button.getAttribute("data-label");
+      if (label) {
+        button.textContent = label;
+      }
+    }
+  }
+
+  function stampLiveUpdate() {
+    var stamp = document.getElementById("sentinel-last-update");
+    var meta = document.getElementById("sentinel-live-meta");
+    if (!stamp) {
+      return;
+    }
+    var now = new Date();
+    var label =
+      String(now.getHours()).padStart(2, "0") +
+      ":" +
+      String(now.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(now.getSeconds()).padStart(2, "0");
+    stamp.textContent = label;
+    if (meta) {
+      meta.setAttribute("data-refreshed-at", label);
+    }
+  }
+
+  function setLiveStatus(message, hide) {
+    var node = document.getElementById("sentinel-live-status");
+    if (!node) {
+      return;
+    }
+    if (hide || !message) {
+      node.hidden = true;
+      node.textContent = "";
+      return;
+    }
+    node.hidden = false;
+    node.textContent = message;
+  }
 
   function renderCharts() {
     var node = document.getElementById("chart-payload");

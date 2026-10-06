@@ -1,0 +1,64 @@
+<div id="admin-gpu" class="sentinel-live"
+     hx-get="/admin/view/fragments/gpu"
+     hx-trigger="every {{ poll_gpu }}s, sentinelRefresh from:body"
+     hx-swap="outerHTML">
+  <section class="panel">
+    <h2>Analyse IA</h2>
+    <ul class="facts">
+      <li>Workers GPU en ligne <strong>{{ display(ai_status.gpu_workers_online, 0) }}</strong></li>
+      <li>Modèle configuré <strong>{{ ai_status.model_name }}</strong></li>
+      <li>Modèle chargé <strong>{{ ai_status.model_loaded_hint }}</strong></li>
+      <li>Prompt <strong>{{ ai_status.prompt_version }}</strong></li>
+      <li>Analyses réussies <strong>{{ display(ai_status.success_count, 0) }}</strong></li>
+      <li>Échecs <strong>{{ display(ai_status.failed_count, 0) }}</strong></li>
+      <li>Sorties invalides <strong>{{ display(ai_status.invalid_output_count, 0) }}</strong></li>
+      <li>En attente / en cours <strong>{{ display(ai_status.pending_or_running, 0) }}</strong></li>
+      <li>Dernière analyse <strong>{{ ai_status.last_completed_at }}</strong></li>
+      <li>Durée moyenne <strong>{% if ai_status.average_duration_ms is not none %}{{ ai_status.average_duration_ms | round(0) }} ms{% else %}—{% endif %}</strong></li>
+    </ul>
+    <p class="muted">Analyse IA — ne modifie pas les scores Sentinel.</p>
+  </section>
+  <section class="panel">
+    <h2>Workers GPU</h2>
+    {% if gpu_workers %}
+    <table>
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Présence</th>
+          <th>GPU</th>
+          <th>VRAM</th>
+          <th>IA</th>
+          <th>Backend</th>
+          <th>Couches GPU</th>
+          <th>Contexte</th>
+          <th>Mémoire modèle</th>
+          <th>Dernier heartbeat</th>
+          <th>Statut</th>
+          <th>Dernier probe</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for worker in gpu_workers %}
+        <tr>
+          <td>{{ worker.name }}</td>
+          <td><span class="badge {{ worker.presence_tone }}">{{ worker.presence_label }}</span></td>
+          <td>{{ worker.gpu_name }}</td>
+          <td>{{ worker.memory_label }}</td>
+          <td>{{ worker.model_name }} · chargé {{ worker.model_loaded_label }}</td>
+          <td>{{ worker.model_backend }}</td>
+          <td>{{ worker.gpu_layers }}</td>
+          <td>{{ worker.context_size }}</td>
+          <td>{{ worker.model_memory_label }}</td>
+          <td>{{ worker.heartbeat_label }}</td>
+          <td>{{ worker.status_label }}</td>
+          <td>{{ worker.probe_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Aucun worker GPU en ligne.</p>
+    {% endif %}
+  </section>
+</div>

@@ -102,15 +102,15 @@ async def ensure_analysis_row(
     force: bool = False,
 ) -> AiDocumentAnalysis:
     existing = await get_latest_analysis(session, document_id)
-    if existing is not None and existing.status == "SUCCESS" and not force:
+    if existing is not None and should_skip_success(existing, force=force):
         return existing
     if existing is not None and existing.status in {"PENDING", "RUNNING"} and not force:
         return existing
     if existing is not None:
         row = existing
+        # Reuse the unique (document_id, model_name, prompt_version) row.
         row.status = "PENDING"
         row.error_message = None
-        row.raw_output = None
         row.result_json = None
         row.runtime_json = None
         row.summary = None
@@ -119,6 +119,8 @@ async def ensure_analysis_row(
         row.completed_at = None
         row.duration_ms = None
         row.worker_name = None
+        # Keep prior raw_output until a new inference overwrites it.
+        row.model_version = effective_model_version()
         await session.flush()
         return row
     row = AiDocumentAnalysis(
@@ -133,6 +135,24 @@ async def ensure_analysis_row(
     return row
 
 
+def should_skip_success(row: AiDocumentAnalysis, *, force: bool = False) -> bool:
+    """Skip only reusable SUCCESS rows when force is false."""
+    if force or row.status != "SUCCESS":
+        return False
+    if settings.ai_provider == "local" and is_stub_analysis(row):
+        return False
+    return True
+
+
+def is_stub_analysis(row: AiDocumentAnalysis) -> bool:
+    worker = (row.worker_name or "").strip().lower()
+    if worker in {"stub", "sentinel-stub"}:
+        return True
+    runtime = row.runtime_json or {}
+    backend = str(runtime.get("model_backend") or runtime.get("runtime_device") or "").strip().lower()
+    return backend == "stub"
+
+
 async def mark_running(session: AsyncSession, row: AiDocumentAnalysis) -> None:
     row.status = "RUNNING"
     row.started_at = datetime.now(timezone.utc)
@@ -144,12 +164,15 @@ async def finalize_from_gpu_result(
     session: AsyncSession,
     row: AiDocumentAnalysis,
     gpu_payload: dict,
+    *,
+    run_id: str | None = None,
 ) -> AiDocumentAnalysis:
     finished = datetime.now(timezone.utc)
     row.completed_at = finished
     row.worker_name = gpu_payload.get("worker_name")
     row.duration_ms = gpu_payload.get("duration_ms")
     row.runtime_json = {
+        "run_id": run_id or gpu_payload.get("run_id"),
         "model_backend": gpu_payload.get("model_backend") or gpu_payload.get("runtime_device"),
         "gpu_layers": gpu_payload.get("gpu_layers"),
         "context_size": gpu_payload.get("context_size"),

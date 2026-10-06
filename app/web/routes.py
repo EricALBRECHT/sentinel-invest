@@ -164,11 +164,68 @@ async def dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     user = await page_user(request, db)
-    page = await viewmodels.dashboard_page(db, universe_status, search=q, limit=limit, offset=offset)
+    hx = request.headers.get("HX-Request") == "true"
+    page = await viewmodels.dashboard_page(
+        db, universe_status, search=q, limit=limit, offset=offset, include_live=not hx
+    )
     context = {"request": request, "user": user, **page}
-    if request.headers.get("HX-Request") == "true":
+    if hx:
         return templates.TemplateResponse(request, "partials/dashboard_table.html", context)
     return templates.TemplateResponse(request, "dashboard.html", context)
+
+
+@router.get("/dashboard/fragments/summary")
+async def dashboard_fragment_summary(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_summary_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_summary.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/companies")
+async def dashboard_fragment_companies(
+    request: Request,
+    universe_status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_page(
+        db, universe_status, search=q, limit=limit, offset=offset, include_live=False
+    )
+    return templates.TemplateResponse(
+        request, "partials/dashboard_table.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/bootstrap")
+async def dashboard_fragment_bootstrap(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_bootstrap_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_bootstrap.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/jobs")
+async def dashboard_fragment_jobs(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_jobs_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_jobs.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/gpu")
+async def dashboard_fragment_gpu(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_gpu_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_gpu.html", {"request": request, "user": user, **page}
+    )
 
 
 @router.get("/companies/{company_id}/view")
@@ -222,6 +279,42 @@ async def admin_view(request: Request, db: AsyncSession = Depends(get_db)):
     if request.headers.get("HX-Request") == "true":
         return templates.TemplateResponse(request, "partials/admin_status.html", context)
     return templates.TemplateResponse(request, "admin.html", context)
+
+
+@router.get("/admin/view/fragments/jobs")
+async def admin_fragment_jobs(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.admin_jobs_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/admin_jobs.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/admin/view/fragments/bootstrap")
+async def admin_fragment_bootstrap(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.admin_bootstrap_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/admin_bootstrap.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/admin/view/fragments/gpu")
+async def admin_fragment_gpu(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.admin_gpu_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/admin_gpu.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/admin/view/fragments/overview")
+async def admin_fragment_overview(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.admin_overview_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/admin_overview.html", {"request": request, "user": user, **page}
+    )
 
 
 @router.post("/admin/view/refresh-sp500")

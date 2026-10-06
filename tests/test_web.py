@@ -287,6 +287,16 @@ async def test_dashboard_company_discovery_and_admin(client, session_factory):
     assert "Exploitable" in dashboard.text
     assert "Partielle" in dashboard.text
     assert "05/10/2026" in dashboard.text
+    assert 'data-sentinel-refresh' in dashboard.text
+    assert 'hx-get="/dashboard/fragments/summary"' in dashboard.text
+    assert "every 60s" in dashboard.text
+    assert "every 10s" in dashboard.text
+    assert "every 15s" in dashboard.text
+    assert "every 30s" in dashboard.text
+    assert "Actualisation automatique" in dashboard.text
+    assert "Auto : activée" in dashboard.text
+    assert "Dernière mise à jour" in dashboard.text
+    assert "delay:400ms" in dashboard.text
     searched = await client.get("/dashboard", params={"q": "NVIDIA"})
     assert "NVIDIA Corporation" in searched.text
     assert "CoreWeave" not in searched.text
@@ -342,7 +352,12 @@ async def test_dashboard_company_discovery_and_admin(client, session_factory):
     admin = await client.get("/admin/view")
     assert admin.status_code == 200
     assert "Postgres" in admin.text
-    assert 'hx-get="/admin/view"' in admin.text
+    assert 'data-sentinel-refresh' in admin.text
+    assert 'hx-get="/admin/view/fragments/jobs"' in admin.text
+    assert 'hx-get="/admin/view/fragments/bootstrap"' in admin.text
+    assert 'hx-get="/admin/view/fragments/gpu"' in admin.text
+    assert 'hx-get="/admin/view/fragments/overview"' in admin.text
+    assert "sentinelRefresh from:body" in admin.text
     _assert_local_html(admin)
     assert "Redis" in admin.text
     assert "Expansion de découverte" in admin.text
@@ -356,6 +371,8 @@ async def test_dashboard_company_discovery_and_admin(client, session_factory):
     assert "queued" not in refreshed.text
     assert "content-security-policy" in refreshed.headers
     assert settings.postgres_password not in refreshed.text
+    assert "<html" not in refreshed.text.lower()
+    assert "<nav" not in refreshed.text.lower()
 
     api = await client.post(
         "/auth/login",
@@ -402,3 +419,163 @@ async def test_vendor_assets_cache_and_swagger(client):
     assert spec.status_code == 200
     assert spec.json()["info"]["title"] == "Sentinel API"
     assert "content-security-policy" not in spec.headers
+
+
+def _assert_fragment(response):
+    assert response.status_code == 200
+    body = response.text.lower()
+    assert "<html" not in body
+    assert "<head" not in body
+    assert "<nav" not in body
+    assert "content-security-policy" in response.headers
+    for host in _CDN:
+        assert host not in response.text
+
+
+async def test_dashboard_and_admin_live_fragments(client, session_factory, monkeypatch):
+    from app.models.company import Company
+
+    async with session_factory() as session:
+        session.add(
+            Company(
+                name="NVIDIA Corporation",
+                ticker="NVDA",
+                exchange="NASDAQ",
+                universe_status="WATCHED",
+                universe_priority=90,
+                discovery_source="NASDAQ100",
+                is_active=True,
+            )
+        )
+        session.add(
+            Company(
+                name="Apple Inc.",
+                ticker="AAPL",
+                exchange="NASDAQ",
+                universe_status="SCREENED",
+                universe_priority=40,
+                discovery_source="SP500",
+                is_active=True,
+            )
+        )
+        await session.commit()
+
+    calls = {"sec": 0, "market": 0, "tech": 0, "gpu": 0, "boot": 0}
+
+    def _bump(key):
+        def _inner(*args, **kwargs):
+            calls[key] += 1
+            return {"enqueued": True}
+
+        return _inner
+
+    async def _boot(*args, **kwargs):
+        calls["boot"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr("app.jobs.queues.enqueue_sec_sync", _bump("sec"))
+    monkeypatch.setattr("app.jobs.queues.enqueue_market_sync", _bump("market"))
+    monkeypatch.setattr("app.jobs.queues.enqueue_technical", _bump("tech"))
+    monkeypatch.setattr("app.jobs.queues.enqueue_ai_document_analysis", _bump("gpu"))
+    monkeypatch.setattr("app.services.universe.bootstrap.bootstrap_universe_data", _boot)
+
+    assert (await client.get("/dashboard/fragments/summary")).status_code == 303
+    assert (await client.get("/dashboard/fragments/companies")).status_code == 303
+    assert (await client.get("/admin/view/fragments/jobs")).status_code == 303
+
+    await _login(client, email="live@example.com")
+
+    summary = await client.get("/dashboard/fragments/summary")
+    _assert_fragment(summary)
+    assert 'id="dashboard-summary"' in summary.text
+    assert 'hx-get="/dashboard/fragments/summary"' in summary.text
+    assert 'hx-trigger="every 60s, sentinelRefresh from:body"' in summary.text
+    assert 'hx-swap="outerHTML"' in summary.text
+    assert "Sociétés actives" in summary.text
+
+    companies = await client.get(
+        "/dashboard/fragments/companies",
+        params={"universe_status": "WATCHED", "q": "NVDA", "limit": 50, "offset": 0},
+    )
+    _assert_fragment(companies)
+    assert 'id="company-table"' in companies.text
+    assert "NVIDIA Corporation" in companies.text
+    assert "Apple Inc." not in companies.text
+    assert "universe_status=WATCHED" in companies.text
+    assert "q=NVDA" in companies.text
+    assert "offset=0" in companies.text
+    assert 'hx-get="/dashboard/fragments/companies?' in companies.text
+    assert "every 60s" in companies.text
+
+    page2 = await client.get(
+        "/dashboard/fragments/companies",
+        params={"universe_status": "", "q": "", "limit": 1, "offset": 1},
+    )
+    _assert_fragment(page2)
+    assert "offset=1" in page2.text
+    assert "limit=1" in page2.text
+
+    jobs = await client.get("/dashboard/fragments/jobs")
+    _assert_fragment(jobs)
+    assert 'hx-get="/dashboard/fragments/jobs"' in jobs.text
+    assert "every 10s" in jobs.text
+
+    bootstrap = await client.get("/dashboard/fragments/bootstrap")
+    _assert_fragment(bootstrap)
+    assert 'hx-get="/dashboard/fragments/bootstrap"' in bootstrap.text
+    assert "every 15s" in bootstrap.text
+
+    gpu = await client.get("/dashboard/fragments/gpu")
+    _assert_fragment(gpu)
+    assert 'hx-get="/dashboard/fragments/gpu"' in gpu.text
+    assert "every 30s" in gpu.text
+
+    admin_jobs = await client.get("/admin/view/fragments/jobs")
+    _assert_fragment(admin_jobs)
+    assert 'hx-get="/admin/view/fragments/jobs"' in admin_jobs.text
+    assert "every 10s" in admin_jobs.text
+    assert "Tâches" in admin_jobs.text
+
+    admin_boot = await client.get("/admin/view/fragments/bootstrap")
+    _assert_fragment(admin_boot)
+    assert "every 15s" in admin_boot.text
+    assert "Univers de marché" in admin_boot.text
+
+    admin_gpu = await client.get("/admin/view/fragments/gpu")
+    _assert_fragment(admin_gpu)
+    assert "every 30s" in admin_gpu.text
+    assert "Workers GPU" in admin_gpu.text
+
+    admin_overview = await client.get("/admin/view/fragments/overview")
+    _assert_fragment(admin_overview)
+    assert "every 60s" in admin_overview.text
+    assert "Postgres" in admin_overview.text
+
+    dashboard = await client.get("/dashboard")
+    assert 'data-sentinel-refresh' in dashboard.text
+    assert "sentinelRefresh from:body" in dashboard.text
+    js = await client.get("/static/js/sentinel.js")
+    assert js.status_code == 200
+    assert "sentinelRefresh" in js.text
+    assert "data-sentinel-refresh" in js.text
+    assert "Échec actualisation" in js.text
+    for host in _CDN:
+        assert host not in js.text
+        assert host not in dashboard.text
+
+    assert calls == {"sec": 0, "market": 0, "tech": 0, "gpu": 0, "boot": 0}
+
+
+async def test_polling_intervals_centralized():
+    from app.web import polling
+
+    assert polling.POLL_SUMMARY_SECONDS == 60
+    assert polling.POLL_COMPANIES_SECONDS == 60
+    assert polling.POLL_BOOTSTRAP_SECONDS == 15
+    assert polling.POLL_JOBS_SECONDS == 10
+    assert polling.POLL_GPU_SECONDS == 30
+    assert polling.POLL_ADMIN_OVERVIEW_SECONDS == 60
+    assert polling.SEARCH_DELAY_MS == 400
+    ctx = polling.poll_context()
+    assert ctx["poll_summary"] == 60
+    assert ctx["search_delay_ms"] == 400

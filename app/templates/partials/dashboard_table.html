@@ -1,4 +1,7 @@
-<div id="company-table">
+<div id="company-table" class="sentinel-live"
+     hx-get="/dashboard/fragments/companies?universe_status={{ universe_status }}&q={{ search }}&limit={{ limit }}&offset={{ offset }}"
+     hx-trigger="every {{ poll_companies }}s, sentinelRefresh from:body"
+     hx-swap="outerHTML">
   <p class="muted">{{ total }} société{% if total != 1 %}s{% endif %} · page {{ ((offset // limit) + 1) if limit else 1 }}</p>
   <table>
     <thead>

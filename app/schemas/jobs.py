@@ -24,3 +24,9 @@ class JobDetailRead(BaseModel):
     ended_at: str | None
     result: dict | None
     error: str | None
+    document_id: int | None = None
+    run_id: str | None = None
+    force: bool | None = None
+    retries_left: int | None = None
+    scheduled_at: str | None = None
+    previous_error: str | None = None

@@ -30,6 +30,8 @@ _HTML_EXACT = {"/login", "/dashboard", "/discovery", "/admin/view"}
 def _sentinel_html_path(path: str) -> bool:
     if path in _HTML_EXACT:
         return True
+    if path.startswith("/dashboard/fragments/") or path.startswith("/admin/view/fragments/"):
+        return True
     return path.startswith("/companies/") and path.endswith("/view")
 
 

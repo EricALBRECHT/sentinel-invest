@@ -5,7 +5,7 @@ import logging
 from rq import Queue
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from rq.registry import FailedJobRegistry, FinishedJobRegistry, StartedJobRegistry
+from rq.registry import FailedJobRegistry, FinishedJobRegistry, ScheduledJobRegistry, StartedJobRegistry
 
 from app.jobs.queues import QUEUE_NAMES, redis_connection
 from app.services.jobs.errors import brief_error
@@ -72,6 +72,9 @@ _PUBLIC_RESULT_KEYS = frozenset(
         "gpu_memory_free_mb",
         "cuda_visible",
         "timestamp",
+        "analysis_id",
+        "run_id",
+        "runtime",
     }
 )
 
@@ -98,12 +101,14 @@ def collect_job_counts() -> dict[str, int] | None:
 
 
 def describe_job(job_id: str) -> dict | None:
+    connection = redis_connection()
     try:
-        job = Job.fetch(job_id, connection=redis_connection())
+        job = Job.fetch(job_id, connection=connection)
     except NoSuchJobError:
         return None
     status = job.get_status(refresh=True)
-    return {
+    meta = job.meta or {}
+    detail = {
         "job_id": job.id,
         "queue": job.origin,
         "status": status,
@@ -112,7 +117,42 @@ def describe_job(job_id: str) -> dict | None:
         "ended_at": _iso(job.ended_at),
         "result": _public_result(job.result) if status == "finished" else None,
         "error": brief_error(job.exc_info) if status == "failed" and job.exc_info else None,
+        "document_id": meta.get("document_id"),
+        "run_id": meta.get("run_id"),
+        "force": meta.get("force"),
+        "retries_left": None,
+        "scheduled_at": None,
+        "previous_error": None,
     }
+    retries_left = getattr(job, "retries_left", None)
+    if retries_left is not None:
+        detail["retries_left"] = int(retries_left)
+    if status == "scheduled":
+        detail["scheduled_at"] = _scheduled_at(job, connection)
+        detail["previous_error"] = brief_error(job.exc_info) if job.exc_info else None
+    return detail
+
+
+def _scheduled_at(job: Job, connection) -> str | None:
+    try:
+        queue_name = job.origin or "default"
+        registry = ScheduledJobRegistry(queue_name, connection=connection)
+        score = registry.get_schedule_time(job.id) if hasattr(registry, "get_schedule_time") else None
+        if score is None and hasattr(registry, "get_expiration_time"):
+            score = registry.get_expiration_time(job)
+        if score is None:
+            # RQ stores score as unix timestamp in the sorted set.
+            raw = connection.zscore(registry.key, job.id)
+            if raw is None:
+                return None
+            from datetime import datetime, timezone
+
+            return datetime.fromtimestamp(float(raw), tz=timezone.utc).isoformat()
+        if hasattr(score, "isoformat"):
+            return score.isoformat()
+        return str(score)
+    except Exception:
+        return None
 
 
 def _public_result(result) -> dict | None:

@@ -1,0 +1,14 @@
+<section id="dashboard-bootstrap" class="panel live-strip sentinel-live"
+         hx-get="/dashboard/fragments/bootstrap"
+         hx-trigger="every {{ poll_bootstrap }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h2>Bootstrap / univers</h2>
+  <ul class="facts">
+    <li>S&amp;P 500 <strong>{{ universe_market.sp500_members }}</strong></li>
+    <li>Nasdaq-100 <strong>{{ universe_market.nasdaq_members }}</strong></li>
+    <li>Progression <strong>{{ universe_market.progress }}</strong></li>
+    <li>En attente marché <strong>{{ display(universe_market.pending_market, 0) }}</strong></li>
+    <li>En attente SEC <strong>{{ display(universe_market.pending_sec, 0) }}</strong></li>
+    <li>Dernier bootstrap <strong>{{ universe_market.last_bootstrap }}</strong></li>
+  </ul>
+</section>

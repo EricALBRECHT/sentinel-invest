@@ -158,7 +158,7 @@ async def enqueue_document_ai_analysis(
 
         await ensure_analysis_row(db, document_id, force=True)
         await db.commit()
-    queued = await asyncio.to_thread(enqueue_ai_document_analysis, document_id, force)
+    queued = await asyncio.to_thread(enqueue_ai_document_analysis, document_id, force=force)
     code = status.HTTP_202_ACCEPTED if queued["enqueued"] else status.HTTP_200_OK
     return JSONResponse(status_code=code, content=JobEnqueueRead(**queued).model_dump())
 

@@ -1,0 +1,12 @@
+<section id="dashboard-jobs" class="panel live-strip sentinel-live"
+         hx-get="/dashboard/fragments/jobs"
+         hx-trigger="every {{ poll_jobs }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h2>Tâches</h2>
+  <ul class="facts">
+    <li>En attente <strong>{{ display(jobs_live.queued, 0) }}</strong></li>
+    <li>En cours <strong>{{ display(jobs_live.started, 0) }}</strong></li>
+    <li>Échec <strong>{{ display(jobs_live.failed, 0) }}</strong></li>
+    <li>Terminées récemment <strong>{{ display(jobs_live.finished_recent, 0) }}</strong></li>
+  </ul>
+</section>

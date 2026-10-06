@@ -1,0 +1,14 @@
+<section id="dashboard-gpu" class="panel live-strip sentinel-live"
+         hx-get="/dashboard/fragments/gpu"
+         hx-trigger="every {{ poll_gpu }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h2>Workers GPU</h2>
+  <ul class="facts">
+    <li>En ligne <strong>{{ display(gpu_online, 0) }}</strong> / {{ gpu_workers|length }}</li>
+    {% for worker in gpu_workers[:3] %}
+    <li>{{ worker.name }} <span class="badge {{ worker.presence_tone }}">{{ worker.presence_label }}</span></li>
+    {% else %}
+    <li class="muted">Aucun worker GPU</li>
+    {% endfor %}
+  </ul>
+</section>
