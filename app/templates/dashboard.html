@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Tableau de bord — Sentinel{% endblock %}
+{% block content %}
+<h1>Tableau de bord</h1>
+<section class="cards">
+  <article><span>Sociétés actives</span><strong>{{ summary.active }}</strong></article>
+  <article><span>Surveillées</span><strong>{{ summary.watched }}</strong></article>
+  <article><span>Découvertes</span><strong>{{ summary.discovered }}</strong></article>
+  <article><span>Candidats</span><strong>{{ summary.candidates }}</strong></article>
+  <article><span>Documents 24 h</span><strong>{{ summary.documents_24h }}</strong></article>
+  <article><span>Événements 24 h</span><strong>{{ summary.events_24h }}</strong></article>
+  <article><span>Tâches en échec</span><strong>{{ display(summary.jobs_failed, 0) }}</strong></article>
+  <article><span>Dernière synchronisation marché</span><strong>{{ display(summary.last_market_sync) }}</strong></article>
+  <article><span>Dernière synchronisation SEC</span><strong>{{ display(summary.last_sec_sync) }}</strong></article>
+</section>
+<form class="filters" method="get" action="/dashboard"
+      hx-get="/dashboard" hx-target="#company-table" hx-swap="outerHTML" hx-push-url="true">
+  <label>Univers
+    <select name="universe_status" data-auto-submit>
+      <option value="">Tous</option>
+      {% for status in ["PORTFOLIO", "DEEP_ANALYSIS", "WATCHED", "SCREENED", "DISCOVERED", "ARCHIVED"] %}
+      <option value="{{ status }}" {% if universe_status == status %}selected{% endif %}>{{ label_universe_status(status) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% include "partials/dashboard_table.html" %}
+{% endblock %}

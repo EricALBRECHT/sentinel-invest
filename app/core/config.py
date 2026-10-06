@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "dev-only-change-me-set-JWT_SECRET_KEY"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    web_cookie_secure: bool = False
 
     # Development placeholder. Replace with a real application name and contact
     # email before relying on SEC EDGAR; the SEC rejects anonymous clients.

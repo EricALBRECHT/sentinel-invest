@@ -1,0 +1,147 @@
+:root {
+  color-scheme: dark;
+  --bg: #121417;
+  --panel: #1c2128;
+  --line: #2d343d;
+  --text: #e7ecf1;
+  --muted: #8b97a6;
+  --good: #1f7a4d;
+  --warn: #8a5a12;
+  --bad: #8d2f2f;
+  --info: #1d4e89;
+  --chip: #2a323c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 "Segoe UI", sans-serif;
+}
+
+a { color: #8eb6e0; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: #171b20;
+}
+
+.brand { color: var(--text); font-weight: 700; text-decoration: none; }
+
+.nav { display: flex; gap: 14px; align-items: center; margin-left: auto; }
+
+.nav a { text-decoration: none; }
+
+.nav button, button, .filters button {
+  background: var(--info);
+  color: white;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.nav-toggle, .nav-button { display: none; }
+
+.page { padding: 20px; max-width: 1480px; margin: 0 auto; }
+
+h1, h2, h3 { font-weight: 650; margin: 0 0 12px; }
+
+.cards, .facts, .filters { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.cards { margin-bottom: 16px; }
+
+.cards article, .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.panel { padding: 12px; }
+.cards article { min-width: 132px; max-width: 220px; padding: 8px 10px; flex: 1 1 158px; }
+.cards span, .muted { color: var(--muted); display: block; }
+.cards span { font-size: 12px; line-height: 1.3; }
+.cards strong { font-size: 18px; line-height: 1.2; }
+
+.panel { margin: 14px 0; }
+.narrow { max-width: 420px; }
+
+.stack, .stack label { display: flex; flex-direction: column; gap: 8px; }
+input, select {
+  background: #101317;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+#company-table, #discovery-results { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#company-table table, #discovery-results table { width: max-content; min-width: 100%; }
+th.company, td.company { min-width: 12.5rem; white-space: nowrap; }
+th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 7px 6px; vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: var(--chip);
+  color: var(--text);
+  font-size: 12px;
+}
+.badge.good { background: var(--good); }
+.badge.warn { background: var(--warn); }
+.badge.bad { background: var(--bad); }
+.badge.info { background: var(--info); }
+.badge.muted { background: var(--chip); color: var(--muted); }
+
+.banner { padding: 8px 10px; border-radius: 6px; }
+.banner.bad { background: var(--bad); }
+.banner.warn { background: var(--warn); }
+
+.facts { list-style: none; padding: 0; margin: 0; }
+.facts li { min-width: 180px; }
+
+.ranges { display: flex; gap: 8px; flex-wrap: wrap; }
+.ranges a { text-decoration: none; padding: 4px 8px; border-radius: 6px; background: var(--chip); }
+.ranges a.is-active { background: var(--info); color: white; }
+
+.text-link { margin-left: 12px; }
+
+.chart-price, .chart-volume { position: relative; width: 100%; margin-top: 8px; background: #101317; border-radius: 6px; }
+.chart-price { height: 280px; }
+.chart-volume { height: 120px; }
+
+.mermaid { background: #101317; border-radius: 6px; padding: 8px; overflow: auto; }
+
+@media (max-width: 760px) {
+  .nav-button {
+    display: inline-block;
+    margin-left: auto;
+    background: var(--chip);
+    padding: 6px 10px;
+    border-radius: 6px;
+  }
+  .nav {
+    display: none;
+    position: absolute;
+    top: 52px;
+    right: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 12px;
+    border-radius: 8px;
+  }
+  .nav-toggle:checked ~ .nav { display: flex; }
+  .panel { overflow-x: auto; }
+  #company-table table, #discovery-results table { display: table; }
+}

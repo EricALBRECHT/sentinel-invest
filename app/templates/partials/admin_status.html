@@ -1,0 +1,72 @@
+<div id="admin-status">
+  <section class="panel">
+    <h2>Système</h2>
+    <ul class="facts">
+      <li>API <span class="badge {{ badge_tone('GOOD' if status.system.api == 'ok' else 'LOW') }}">{{ label_system_status(status.system.api) }}</span></li>
+      <li>Postgres <span class="badge {{ badge_tone('GOOD' if status.system.postgres == 'ok' else 'LOW') }}">{{ label_system_status(status.system.postgres) }}</span></li>
+      <li>Redis <span class="badge {{ badge_tone('GOOD' if status.system.redis == 'ok' else 'LOW') }}">{{ label_system_status(status.system.redis) }}</span></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Tâches</h2>
+    <ul class="facts">
+      <li>En attente <strong>{{ display(status.jobs.queued, 0) }}</strong></li>
+      <li>En cours <strong>{{ display(status.jobs.started, 0) }}</strong></li>
+      <li>Échec <strong>{{ display(status.jobs.failed, 0) }}</strong></li>
+      <li>Terminées récemment <strong>{{ display(status.jobs.finished_recent, 0) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>SEC</h2>
+    <ul class="facts">
+      <li>À traiter <strong>{{ display(status.sync.sec_due, 0) }}</strong></li>
+      <li>Dernier succès <strong>{{ display(status.sync.sec_last_success) }}</strong></li>
+      <li>Échecs <strong>{{ display(status.sync.sec_failures, 0) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Marché</h2>
+    <ul class="facts">
+      <li>Avec données <strong>{{ display(status.market.companies_with_market_data, 0) }}</strong></li>
+      <li>Sans données <strong>{{ display(status.market.companies_without_market_data, 0) }}</strong></li>
+      <li>Dernière synchronisation <strong>{{ display(status.market.last_market_sync) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Technique</h2>
+    <ul class="facts">
+      <li>Sociétés notées <strong>{{ display(status.technical.companies_scored, 0) }}</strong></li>
+      <li>Instantanés <strong>{{ display(status.technical.technical_snapshots_count, 0) }}</strong></li>
+      <li>Plus ancien <strong>{{ display(status.technical.oldest_technical_date) }}</strong></li>
+      <li>Plus récent <strong>{{ display(status.technical.latest_technical_date) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Intelligence externe</h2>
+    <ul class="facts">
+      <li>Sources <strong>{{ display(status.intelligence.sources_active, 0) }}</strong></li>
+      <li>Documents <strong>{{ display(status.intelligence.documents_total, 0) }}</strong></li>
+      <li>Événements <strong>{{ display(status.intelligence.events_total, 0) }}</strong></li>
+      <li>Sources en échec <strong>{{ display(status.intelligence.failed_sources, 0) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Chaîne d’approvisionnement</h2>
+    <ul class="facts">
+      <li>Relations <strong>{{ display(status.supply_chain.relationships_total, 0) }}</strong></li>
+      <li>Candidats <strong>{{ display(status.supply_chain.discovered_companies, 0) }}</strong></li>
+      <li>Dernier traitement <strong>{{ display(status.supply_chain.last_processing) }}</strong></li>
+    </ul>
+  </section>
+  <section class="panel">
+    <h2>Expansion de découverte</h2>
+    <ul class="facts">
+      <li>{{ label_pipeline("READY") }} <strong>{{ display(status.discovery_expansion.ready, 0) }}</strong></li>
+      <li>{{ label_pipeline("COLLECTING") }} <strong>{{ display(status.discovery_expansion.collecting, 0) }}</strong></li>
+      <li>{{ label_pipeline("ANALYZED") }} <strong>{{ display(status.discovery_expansion.analyzed, 0) }}</strong></li>
+      <li>{{ label_pipeline("BLOCKED") }} <strong>{{ display(status.discovery_expansion.blocked, 0) }}</strong></li>
+      <li>Profondeur maximale <strong>{{ deepest_depth }}</strong></li>
+      <li>Société la plus profonde <strong>{{ status.discovery_expansion.deepest_company or "—" }}</strong></li>
+    </ul>
+  </section>
+</div>

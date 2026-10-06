@@ -1,0 +1,42 @@
+<div id="company-table">
+  <table>
+    <thead>
+      <tr>
+        <th class="company">Société</th>
+        <th>Ticker</th>
+        <th>Univers</th>
+        <th>Priorité</th>
+        <th>Qualité</th>
+        <th>Opportunité</th>
+        <th>Couverture</th>
+        <th>Technique</th>
+        <th>Conviction long terme</th>
+        <th>Attractivité d’entrée</th>
+        <th>Maturité de l’analyse</th>
+        <th>Marché</th>
+        <th>Cours</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="company"><a href="/companies/{{ row.company.id }}/view">{{ row.company.name }}</a></td>
+        <td>{{ row.company.ticker }}</td>
+        <td><span class="badge {{ badge_tone(row.company.universe_status) }}">{{ label_universe_status(row.company.universe_status) }}</span></td>
+        <td>{{ row.company.universe_priority }}</td>
+        <td>{{ display(row.quality) }}</td>
+        <td>{{ display(row.opportunity) }}</td>
+        <td>{% if row.coverage is not none %}{{ display(row.coverage, 0) }} <span class="badge {{ badge_tone(row.coverage_status) }}">{{ label_coverage(row.coverage_status) }}</span>{% else %}—{% endif %}</td>
+        <td>{{ display(row.technical) }}</td>
+        <td>{{ display(row.conviction) }} {% if row.conviction_label %}<span class="badge {{ badge_tone(row.conviction_label) }}">{{ label_conviction(row.conviction_label) }}</span>{% endif %}</td>
+        <td>{{ display(row.entry) }} {% if row.entry_label %}<span class="badge {{ badge_tone(row.entry_label) }}">{{ label_entry(row.entry_label) }}</span>{% endif %}</td>
+        <td>{{ display(row.readiness) }} {% if row.readiness_label %}<span class="badge {{ badge_tone(row.readiness_label) }}">{{ label_readiness(row.readiness_label) }}</span>{% endif %}</td>
+        <td>{{ display(row.market_date) }}</td>
+        <td>{{ display(row.price) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="13">Aucune société pour ce filtre.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Découverte — Sentinel{% endblock %}
+{% block content %}
+<h1>Découverte</h1>
+<form class="filters" method="get" action="/discovery"
+      hx-get="/discovery" hx-target="#discovery-results" hx-swap="outerHTML" hx-push-url="true">
+  <label>Statut
+    <select name="status">
+      <option value="">Tous</option>
+      {% for status in ["CANDIDATE", "VERIFIED", "IMPORTED", "REJECTED"] %}
+      <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ label_candidate_status(status) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Vérification
+    <select name="verification_status">
+      <option value="">Toutes</option>
+      {% for status in ["UNVERIFIED", "PARTIAL", "VERIFIED", "REJECTED"] %}
+      <option value="{{ status }}" {% if filters.verification_status == status %}selected{% endif %}>{{ label_verification(status) }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Profondeur <input type="number" name="depth" min="0" max="20" value="{{ filters.depth }}"></label>
+  <label>Confiance minimale <input type="number" name="confidence_min" min="0" max="100" value="{{ filters.confidence_min }}"></label>
+  <button type="submit">Filtrer</button>
+</form>
+{% include "partials/discovery_results.html" %}
+{% endblock %}

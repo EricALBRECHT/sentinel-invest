@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}{{ company.ticker }} — Sentinel{% endblock %}
+{% block vendor %}
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/mermaid.min.js"></script>
+{% endblock %}
+{% block content %}
+<h1>{{ company.name }} <span class="muted">{{ company.ticker }}</span></h1>
+
+<section class="panel">
+  <h2>Synthèse</h2>
+  <ul class="facts">
+    <li>Place boursière <strong>{{ company.exchange or "—" }}</strong></li>
+    <li>Statut <span class="badge {{ badge_tone(company.universe_status) }}">{{ label_universe_status(company.universe_status) }}</span></li>
+    <li>Univers <strong>{% if memberships %}{% for name in memberships %}{{ label_universe_name(name) }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}—{% endif %}</strong></li>
+    <li>Priorité <strong>{{ company.universe_priority }}</strong></li>
+    <li>Cours <strong>{{ display(market.price if market else none) }}</strong></li>
+    <li>Capitalisation <strong>{{ display_compact(company.market_cap if company.market_cap is not none else (market.market_cap if market else none)) }}</strong></li>
+    <li>Conviction long terme <strong>{{ display(view.long_term_conviction_score if view else none) }}</strong> {% if view and view.long_term_conviction_label %}<span class="badge {{ badge_tone(view.long_term_conviction_label) }}">{{ label_conviction(view.long_term_conviction_label) }}</span>{% endif %}</li>
+    <li>Attractivité d’entrée <strong>{{ display(view.entry_attractiveness_score if view else none) }}</strong> {% if view and view.entry_attractiveness_label %}<span class="badge {{ badge_tone(view.entry_attractiveness_label) }}">{{ label_entry(view.entry_attractiveness_label) }}</span>{% endif %}</li>
+    <li>Maturité de l’analyse <strong>{{ display(view.analysis_readiness_score if view else none) }}</strong> {% if view and view.analysis_readiness_label %}<span class="badge {{ badge_tone(view.analysis_readiness_label) }}">{{ label_readiness(view.analysis_readiness_label) }}</span>{% endif %}</li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h2>Marché</h2>
+  <p class="ranges">
+    {% for item in ranges %}
+    <a href="/companies/{{ company.id }}/view?range={{ item }}&depth={{ graph_depth }}" {% if item == chart_range %}class="is-active"{% endif %}>{{ item }}</a>
+    {% endfor %}
+  </p>
+  <div class="chart-price"><canvas id="price-chart"></canvas></div>
+  <div class="chart-volume"><canvas id="volume-chart"></canvas></div>
+  <script id="chart-payload" type="application/json">{{ chart | tojson }}</script>
+</section>
+
+<section class="panel">
+  <h2>Fondamentaux</h2>
+  <ul class="facts">
+    <li>Qualité <strong>{{ display(quality.quality_score if quality else none) }}</strong></li>
+    <li>Confiance <strong>{{ display(quality.overall_confidence_score if quality else none, 0) }}</strong></li>
+    <li>Chiffre d’affaires {% if fiscal and fiscal.fiscal_year %}FY{{ fiscal.fiscal_year }}{% endif %} <strong>{{ display_compact(fiscal.revenue if fiscal else none) }}</strong></li>
+    <li>Croissance <strong>{{ display_ratio(metrics.get("revenue_growth_1y")) }}</strong></li>
+    <li>Marge brute <strong>{{ display_ratio(metrics.get("gross_margin")) }}</strong></li>
+    <li>Marge opérationnelle <strong>{{ display_ratio(metrics.get("operating_margin")) }}</strong></li>
+    <li>Marge nette <strong>{{ display_ratio(metrics.get("net_margin")) }}</strong></li>
+    <li>Flux de trésorerie disponible <strong>{{ display_compact(fiscal.free_cash_flow if fiscal else none) }}</strong></li>
+    <li>Dette <strong>{{ display_compact(fiscal.total_debt if fiscal else none) }}</strong></li>
+    <li>ROE <strong>{{ display_ratio(metrics.get("roe")) }}</strong></li>
+    <li>ROA <strong>{{ display_ratio(metrics.get("roa")) }}</strong></li>
+  </ul>
+</section>
+
+<section class="panel">
+  <h2>Opportunité</h2>
+  {% if opportunity %}
+  <ul class="facts">
+    <li>Score brut <strong>{{ display(opportunity.opportunity_score) }}</strong></li>
+    <li>Couverture <strong>{{ display(opportunity.coverage_score, 0) }}</strong> <span class="badge {{ badge_tone(opportunity.coverage_status) }}">{{ label_coverage(opportunity.coverage_status) }}</span></li>
+    <li>Éligible au classement <strong>{{ display(opportunity.ranking_eligible) }}</strong></li>
+    <li>Potentiel de croissance <strong>{{ display(opportunity.growth_runway_score) }}</strong></li>
+    <li>Potentiel de taille <strong>{{ display(opportunity.size_runway_score) }}</strong></li>
+    <li>Mégatendance <strong>{{ display(opportunity.megatrend_score) }}</strong></li>
+    <li>Marché <strong>{{ display(opportunity.market_score) }}</strong></li>
+    <li>Position stratégique <strong>{{ display(opportunity.strategic_position_score) }}</strong></li>
+    <li>Goulot d’étranglement <strong>{{ display(opportunity.bottleneck_score) }}</strong></li>
+    <li>Innovation <strong>{{ display(opportunity.innovation_score) }}</strong></li>
+    <li>Avantage concurrentiel <strong>{{ display(opportunity.moat_score) }}</strong></li>
+    <li>Expansion <strong>{{ display(opportunity.expansion_score) }}</strong></li>
+  </ul>
+  {% else %}
+  <p class="muted">Aucun profil d’opportunité, donc aucun score.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Analyse technique</h2>
+  {% if technical %}
+  <ul class="facts">
+    <li>Cours <strong>{{ display(technical.price) }}</strong></li>
+    <li>SMA20 <strong>{{ display(technical.sma_20) }}</strong></li>
+    <li>SMA50 <strong>{{ display(technical.sma_50) }}</strong></li>
+    <li>SMA100 <strong>{{ display(technical.sma_100) }}</strong></li>
+    <li>SMA200 <strong>{{ display(technical.sma_200) }}</strong></li>
+    <li>RSI <strong>{{ display(technical.rsi_14) }}</strong></li>
+    <li>MACD <strong>{{ display(technical.macd) }}</strong></li>
+    <li>Signal <strong>{{ display(technical.macd_signal) }}</strong></li>
+    <li>Histogramme <strong>{{ display(technical.macd_histogram) }}</strong></li>
+    <li>ATR <strong>{{ display(technical.atr_14) }}</strong></li>
+    <li>Volatilité <strong>{{ display(technical.volatility_20d) }}</strong></li>
+    <li>Ratio de volume <strong>{{ display(technical.volume_ratio) }}</strong></li>
+    <li>Supports <strong>{{ display(technical.support_1) }} / {{ display(technical.support_2) }}</strong></li>
+    <li>Résistances <strong>{{ display(technical.resistance_1) }} / {{ display(technical.resistance_2) }}</strong></li>
+    <li>Tendance court terme <span class="badge {{ badge_tone(technical.trend_short) }}">{{ label_trend(technical.trend_short) }}</span></li>
+    <li>Tendance moyen terme <span class="badge {{ badge_tone(technical.trend_medium) }}">{{ label_trend(technical.trend_medium) }}</span></li>
+    <li>Tendance long terme <span class="badge {{ badge_tone(technical.trend_long) }}">{{ label_trend(technical.trend_long) }}</span></li>
+    <li>Score technique <strong>{{ display(technical.technical_score) }}</strong> <span class="badge info">{{ technical.technical_confidence }}</span></li>
+  </ul>
+  {% else %}
+  <p class="muted">Pas encore d’analyse technique.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Vue d’investissement</h2>
+  {% if view %}
+  <ul class="facts">
+    <li>Conviction long terme <strong>{{ display(view.long_term_conviction_score) }}</strong> {% if view.long_term_conviction_label %}<span class="badge {{ badge_tone(view.long_term_conviction_label) }}">{{ label_conviction(view.long_term_conviction_label) }}</span>{% endif %}</li>
+    <li>Attractivité d’entrée <strong>{{ display(view.entry_attractiveness_score) }}</strong> {% if view.entry_attractiveness_label %}<span class="badge {{ badge_tone(view.entry_attractiveness_label) }}">{{ label_entry(view.entry_attractiveness_label) }}</span>{% endif %}</li>
+    <li>Maturité de l’analyse <strong>{{ display(view.analysis_readiness_score) }}</strong> {% if view.analysis_readiness_label %}<span class="badge {{ badge_tone(view.analysis_readiness_label) }}">{{ label_readiness(view.analysis_readiness_label) }}</span>{% endif %}</li>
+  </ul>
+  {% if warnings %}
+  <h3>Avertissements</h3>
+  <ul>
+    {% for warning in warnings %}<li>{{ translate_warning(warning) }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% else %}
+  <p class="muted">Pas encore de vue d’investissement.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Actualités / Documents</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Source</th><th>Titre</th><th>Type</th><th>Confiance</th></tr></thead>
+    <tbody>
+      {% for item in documents %}
+      <tr>
+        <td>{{ display(item.document.published_at) }}</td>
+        <td>{{ item.source }}</td>
+        <td>{% if item.document.url %}<a href="{{ item.document.url }}">{{ item.document.title or item.document.url }}</a>{% else %}{{ item.document.title or "—" }}{% endif %}</td>
+        <td>{{ label_document_type(item.document.document_type) }}</td>
+        <td>{{ item.confidence }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">Aucun document.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Chaîne d’approvisionnement</h2>
+  <p class="ranges">
+    <a href="/companies/{{ company.id }}/view?range={{ chart_range }}&depth=1" {% if graph_depth == 1 %}class="is-active"{% endif %}>Profondeur 1</a>
+    <a href="/companies/{{ company.id }}/view?range={{ chart_range }}&depth=2" {% if graph_depth == 2 %}class="is-active"{% endif %}>Profondeur 2</a>
+  </p>
+  <pre class="mermaid">{{ mermaid }}</pre>
+  <h3>Confirmées</h3>
+  <ul>
+    {% for edge in confirmed %}
+    <li>{{ label_relationship_type(edge.relationship_type) }} · {{ label_direction(edge.direction) }} · {{ edge.confidence }} · {{ label_relationship_status(edge.status) }}</li>
+    {% else %}<li class="muted">Aucune.</li>{% endfor %}
+  </ul>
+  <h3>Découvertes</h3>
+  <ul>
+    {% for edge in discovered_edges %}
+    <li>{{ label_relationship_type(edge.relationship_type) }} · {{ label_direction(edge.direction) }} · {{ edge.confidence }} · {{ label_relationship_status(edge.status) }}</li>
+    {% else %}<li class="muted">Aucune.</li>{% endfor %}
+  </ul>
+  <h3>Candidats</h3>
+  <ul>
+    {% for candidate in graph.candidates %}
+    <li>{{ candidate.name }} · {{ candidate.confidence }}</li>
+    {% else %}<li class="muted">Aucun.</li>{% endfor %}
+  </ul>
+</section>
+
+<section class="panel">
+  <h2>Découverte</h2>
+  <ul class="facts">
+    <li>Société parente <strong>{% if parent %}{{ parent.ticker }} — {{ parent.name }}{% else %}—{% endif %}</strong></li>
+    <li>Profondeur <strong>{{ company.discovery_depth }}</strong></li>
+    <li>État du pipeline <span class="badge {{ badge_tone(company.discovery_pipeline_status) }}">{{ label_pipeline(company.discovery_pipeline_status) }}</span></li>
+    <li>Source <strong>{{ label_discovery_source(company.discovery_source) }}</strong></li>
+  </ul>
+</section>
+{% endblock %}

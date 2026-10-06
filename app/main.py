@@ -21,6 +21,7 @@ from app.api.routes.universe import import_router as universe_import_router
 from app.api.routes.universe import router as universe_router
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.web import install_web
 
 
 def _configure_logging() -> None:
@@ -36,6 +37,7 @@ def _configure_logging() -> None:
 _configure_logging()
 
 app = FastAPI(title="Sentinel API")
+install_web(app)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(jobs_router)

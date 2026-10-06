@@ -1,0 +1,64 @@
+<div id="discovery-results">
+  <h2>Candidats</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Statut</th>
+        <th>Vérification</th>
+        <th>Confiance</th>
+        <th>Preuves</th>
+        <th>Rôle</th>
+        <th>Société parente</th>
+        <th>Profondeur</th>
+        <th>Promue</th>
+        <th>État du pipeline</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in candidates %}
+      <tr>
+        <td>{{ item.row.name }}</td>
+        <td><span class="badge {{ badge_tone(item.row.status) }}">{{ label_candidate_status(item.row.status) }}</span></td>
+        <td><span class="badge {{ badge_tone(item.row.verification_status) }}">{{ label_verification(item.row.verification_status) }}</span></td>
+        <td>{{ item.row.confidence }}</td>
+        <td>{{ item.row.evidence_count }}</td>
+        <td>{{ label_relationship_type(item.role) }}</td>
+        <td>{% if item.parent %}{{ item.parent.ticker }}{% else %}—{% endif %}</td>
+        <td>{{ display(item.depth, 0) }}</td>
+        <td>{% if item.promoted %}<a href="/companies/{{ item.promoted.id }}/view">{{ item.promoted.ticker }}</a>{% else %}—{% endif %}</td>
+        <td>{% if item.promoted %}<span class="badge {{ badge_tone(item.promoted.discovery_pipeline_status) }}">{{ label_pipeline(item.promoted.discovery_pipeline_status) }}</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10">Aucun candidat.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2>Sociétés découvertes</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Société</th>
+        <th>Ticker</th>
+        <th>Profondeur</th>
+        <th>Société parente</th>
+        <th>État du pipeline</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in companies %}
+      <tr>
+        <td><a href="/companies/{{ item.company.id }}/view">{{ item.company.name }}</a></td>
+        <td>{{ item.company.ticker }}</td>
+        <td>{{ item.company.discovery_depth }}</td>
+        <td>{% if item.parent %}{{ item.parent.ticker }}{% else %}—{% endif %}</td>
+        <td><span class="badge {{ badge_tone(item.company.discovery_pipeline_status) }}">{{ label_pipeline(item.company.discovery_pipeline_status) }}</span></td>
+        <td>{{ label_discovery_source(item.company.discovery_source) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">Aucune société découverte.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
