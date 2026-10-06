@@ -136,40 +136,69 @@ def detect_cuda_build() -> dict[str, Any]:
     return info
 
 
-def warmup_model() -> dict[str, Any]:
-    """Load once and run a tiny JSON completion. Safe to call at worker start."""
+def preload_model() -> dict[str, Any]:
+    """Load the GGUF once. Does not generate any token."""
+    logger.info("ai_preload_started")
     if env_provider() == "stub" or os.environ.get("SENTINEL_AI_STUB") == "1":
-        return {"ok": True, "backend": "stub", "skipped": True}
+        payload = {
+            "ok": True,
+            "backend": "stub",
+            "gpu_layers": None,
+            "status": "skipped",
+            "skipped": True,
+        }
+        logger.info(
+            "ai_preload_finished backend=%s gpu_layers=%s status=%s",
+            payload["backend"],
+            payload["gpu_layers"],
+            payload["status"],
+        )
+        return payload
+
     model_path = env_model_path()
     if not os.path.isfile(model_path):
-        logger.warning("ai_warmup_skipped reason=model_missing path=%s", model_path)
-        return {"ok": False, "error": "model_missing", "path": model_path}
+        logger.warning("ai_preload_skipped reason=model_missing path=%s", model_path)
+        payload = {
+            "ok": False,
+            "backend": None,
+            "gpu_layers": None,
+            "status": "model_missing",
+            "error": "model_missing",
+            "path": model_path,
+        }
+        logger.info(
+            "ai_preload_finished backend=%s gpu_layers=%s status=%s",
+            payload["backend"],
+            payload["gpu_layers"],
+            payload["status"],
+        )
+        return payload
+
     with _LOCK:
         if _RUNTIME.get("llm") is None:
             _load_llama_locked()
-        if not _RUNTIME.get("warmed"):
-            llm = _RUNTIME["llm"]
-            llm.create_chat_completion(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": 'Reply with JSON only: {"ok": true}',
-                    }
-                ],
-                temperature=0,
-                max_tokens=32,
-                response_format={"type": "json_object"},
-            )
-            _RUNTIME["warmed"] = True
-        status = runtime_status()
+        backend = _RUNTIME.get("backend")
+        gpu_layers = _RUNTIME.get("gpu_layers")
+    status = runtime_status()
+    payload = {
+        **status,
+        "ok": True,
+        "backend": backend,
+        "gpu_layers": gpu_layers,
+        "status": "loaded",
+    }
     logger.info(
-        "ai_runtime_ready runtime=llama.cpp backend=%s gpu_layers=%s model=%s context=%s",
-        status.get("model_backend"),
-        status.get("gpu_layers"),
-        status.get("model_name"),
-        status.get("context_size"),
+        "ai_preload_finished backend=%s gpu_layers=%s status=%s",
+        backend,
+        gpu_layers,
+        payload["status"],
     )
-    return {"ok": True, **status}
+    return payload
+
+
+def warmup_model() -> dict[str, Any]:
+    """Load the GGUF once. Kept for callers; boot uses preload_model and generates nothing."""
+    return preload_model()
 
 
 def generate_structured_output(payload: dict) -> tuple[str, dict, dict]:

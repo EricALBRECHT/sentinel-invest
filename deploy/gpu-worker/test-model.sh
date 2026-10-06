@@ -19,7 +19,7 @@ echo "=== nvidia-smi ==="
 nvidia-smi || { echo "CUDA/driver unavailable" >&2; exit 1; }
 
 echo "=== container load test ==="
-docker exec sentinel-gpu-worker python3 - <<'PY'
+docker exec -i sentinel-gpu-worker python3 - <<'PY'
 import json, os, time
 from app.jobs.gpu.model_runtime import (
     detect_cuda_build,

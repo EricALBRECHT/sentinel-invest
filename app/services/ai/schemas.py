@@ -63,6 +63,7 @@ class AiDocumentInput(BaseModel):
 
 
 class AiCompanyMention(BaseModel):
+    company_id: int | None = None
     name: str
     ticker: str | None = None
     role: CompanyRole

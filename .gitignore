@@ -11,3 +11,4 @@ deploy/gpu-worker/ssh/
 *.gguf
 sentinel_gpu
 sentinel_gpu.pub
+deploy/gpu-worker/Dockerfile_old
