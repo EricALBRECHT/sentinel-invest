@@ -8,5 +8,6 @@ venv/
 deploy/gpu-worker/run/
 deploy/gpu-worker/models/
 deploy/gpu-worker/ssh/
+*.gguf
 sentinel_gpu
 sentinel_gpu.pub

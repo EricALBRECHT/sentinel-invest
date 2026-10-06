@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     discovery_expansion_max_per_run: int = 20
     discovery_expansion_scan_hours: int = 24
     discovery_expansion_analyzed_hours: int = 48
+    ai_provider: str = "local"
+    ai_model_name: str = "Qwen2.5-1.5B-Instruct-Q4_K_M"
+    ai_model_path: str = ""
+    ai_model_version: str = ""
+    ai_model_cache: str = "/models"
+    ai_model_filename: str = ""
+    ai_max_context: int = 2048
+    ai_max_output_tokens: int = 768
+    ai_max_input_chars: int = 12000
+    ai_temperature: float = 0.0
+    ai_gpu_layers: int = 20
 
     class Config:
         env_file = ".env"

@@ -122,8 +122,9 @@
 
 <section class="panel">
   <h2>Actualités / Documents</h2>
+  <p class="muted">Analyse IA — ne modifie pas les scores.</p>
   <table>
-    <thead><tr><th>Date</th><th>Source</th><th>Titre</th><th>Type</th><th>Confiance</th></tr></thead>
+    <thead><tr><th>Date</th><th>Source</th><th>Titre</th><th>Type</th><th>Confiance</th><th>Analyse IA</th><th>Action</th></tr></thead>
     <tbody>
       {% for item in documents %}
       <tr>
@@ -132,9 +133,22 @@
         <td>{% if item.document.url %}<a href="{{ item.document.url }}">{{ item.document.title or item.document.url }}</a>{% else %}{{ item.document.title or "—" }}{% endif %}</td>
         <td>{{ label_document_type(item.document.document_type) }}</td>
         <td>{{ item.confidence }}</td>
+        <td>
+          {% if item.ai_analysis %}
+          <span class="badge {{ badge_tone(item.ai_analysis.status) }}">{{ label_ai_analysis_status(item.ai_analysis.status) }}</span>
+          {% if item.ai_analysis.summary %}<div class="muted">{{ item.ai_analysis.summary[:180] }}{% if item.ai_analysis.summary|length > 180 %}…{% endif %}</div>{% endif %}
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="/companies/{{ company.id }}/documents/{{ item.document.id }}/ai-analyze">
+            <button type="submit">Analyser avec l'IA</button>
+          </form>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="5">Aucun document.</td></tr>
+      <tr><td colspan="7">Aucun document.</td></tr>
       {% endfor %}
     </tbody>
   </table>

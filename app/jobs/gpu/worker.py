@@ -24,6 +24,7 @@ def main() -> None:
     queue_name = os.environ.get("GPU_QUEUE", "gpu")
     if queue_name != "gpu" or queue_name in _CORE_QUEUES:
         raise RuntimeError("GPU worker listens only to the gpu queue")
+    _warmup()
     stop = threading.Event()
     beater = threading.Thread(
         target=_beat,
@@ -41,6 +42,24 @@ def main() -> None:
         raise
     finally:
         stop.set()
+
+
+def _warmup() -> None:
+    if os.environ.get("AI_PROVIDER", "local").strip().lower() == "stub":
+        logger.info("ai_warmup_skipped provider=stub")
+        return
+    try:
+        from app.jobs.gpu.model_runtime import warmup_model
+
+        result = warmup_model()
+        logger.info(
+            "ai_warmup_finished ok=%s backend=%s gpu_layers=%s",
+            result.get("ok"),
+            result.get("model_backend") or result.get("backend"),
+            result.get("gpu_layers"),
+        )
+    except Exception as exc:
+        logger.warning("ai_warmup_failed error_type=%s", type(exc).__name__)
 
 
 def _beat(connection, stop: threading.Event) -> None:

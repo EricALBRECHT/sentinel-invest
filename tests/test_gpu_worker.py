@@ -260,19 +260,22 @@ async def test_admin_page_shows_gpu_worker_in_french(client, monkeypatch):
 
 
 def test_gpu_deploy_files_are_portable_and_do_not_publish_redis():
-    blob = "\n".join(path.read_text() for path in _DEPLOY.rglob("*") if path.is_file())
+    blob = "\n".join(path.read_text() for path in _DEPLOY.rglob("*") if path.is_file() and path.suffix != ".gguf")
     assert "/mnt/c" not in blob
     assert "C:\\" not in blob
     assert "0.0.0.0" not in blob
     dockerfile = (_DEPLOY / "Dockerfile").read_text()
-    assert "nvidia/cuda:11.8.0-base-ubuntu22.04" in dockerfile
+    assert "nvidia/cuda:11.8.0-devel-ubuntu22.04" in dockerfile
+    assert "nvidia/cuda:11.8.0-runtime-ubuntu22.04" in dockerfile
+    assert "CMAKE_CUDA_ARCHITECTURES=61" in dockerfile
     assert "cuda:13" not in dockerfile.lower()
     compose = (_DEPLOY / "docker-compose.yml").read_text()
     assert "network_mode: host" in compose
     assert "sentinel-gpu-worker" in compose
     assert "GPU_REDIS_HOST: 127.0.0.1" in compose
+    assert "AI_MODEL_CACHE: /models" in compose
     assert "postgres" not in compose.lower()
     core = Path("docker-compose.yml").read_text()
     assert '"127.0.0.1:6379:6379"' in core
-    for name in ("install.sh", "check-gpu.sh", "healthcheck.sh", "tunnel.sh", "env.sh"):
+    for name in ("install.sh", "check-gpu.sh", "healthcheck.sh", "tunnel.sh", "env.sh", "fetch-model.sh", "test-model.sh"):
         subprocess.run(["bash", "-n", str(_DEPLOY / name)], check=True)

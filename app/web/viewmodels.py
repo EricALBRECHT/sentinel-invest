@@ -37,7 +37,19 @@ _DASHBOARD_DEFAULT = ("PORTFOLIO", "DEEP_ANALYSIS", "WATCHED", "DISCOVERED")
 _DASHBOARD_PAGE_SIZE = 50
 _RANGES = {"3M": 92, "6M": 183, "1Y": 366, "3Y": 1095, "5Y": 1826, "MAX": None}
 _GOOD = frozenset(
-    {"HIGH", "VERY_HIGH", "STRONG", "CONFIRMED", "VERIFIED", "COMPLETE", "USABLE", "GOOD", "ANALYZED", "PUBLIC_COMPANY"}
+    {
+        "HIGH",
+        "VERY_HIGH",
+        "STRONG",
+        "CONFIRMED",
+        "VERIFIED",
+        "COMPLETE",
+        "USABLE",
+        "GOOD",
+        "ANALYZED",
+        "PUBLIC_COMPANY",
+        "SUCCESS",
+    }
 )
 _WARN = frozenset(
     {
@@ -55,9 +67,12 @@ _WARN = frozenset(
         "DEEP_ANALYSIS",
         "PORTFOLIO",
         "SCREENED",
+        "INVALID_OUTPUT",
+        "PENDING",
+        "RUNNING",
     }
 )
-_BAD = frozenset({"LOW", "POOR", "REJECTED", "BLOCKED", "INCOMPLETE", "EXTENDED_OR_EXCEPTIONAL"})
+_BAD = frozenset({"LOW", "POOR", "REJECTED", "BLOCKED", "INCOMPLETE", "EXTENDED_OR_EXCEPTIONAL", "FAILED"})
 _ROLES = frozenset(
     {
         "CUSTOMER",
@@ -377,15 +392,35 @@ async def discovery_page(
 
 
 async def admin_page(session: AsyncSession) -> dict:
+    from app.services.ai.service import admin_ai_status
+
     status = await build_admin_status(session)
     deepest = await session.scalar(select(func.max(Company.discovery_depth)))
     market = await universe_market_status(session)
+    ai_status = await admin_ai_status(session)
     return {
         "status": status,
         "deepest_depth": int(deepest or 0),
         "netdata_url": "http://192.168.1.116:19999",
         "gpu_workers": [present_gpu_worker(row) for row in gpu_workers_for_page()],
         "universe_market": present_universe_market(market),
+        "ai_status": present_ai_status(ai_status),
+    }
+
+
+def present_ai_status(status: dict) -> dict:
+    return {
+        "provider": status.get("provider"),
+        "model_name": status.get("model_name"),
+        "prompt_version": status.get("prompt_version"),
+        "gpu_workers_online": status.get("gpu_workers_online", 0),
+        "model_loaded_hint": status.get("model_loaded_hint") or "—",
+        "success_count": status.get("success_count", 0),
+        "failed_count": status.get("failed_count", 0),
+        "invalid_output_count": status.get("invalid_output_count", 0),
+        "pending_or_running": status.get("pending_or_running", 0),
+        "last_completed_at": _gpu_moment(status.get("last_completed_at")),
+        "average_duration_ms": status.get("average_duration_ms"),
     }
 
 
@@ -416,6 +451,20 @@ def present_gpu_worker(row: dict) -> dict:
     if memory is None and probe is not None:
         memory = probe.get("gpu_memory_total_mb")
     status = str(row.get("status") or "offline")
+    backend = row.get("model_backend") or (probe or {}).get("model_backend") or (probe or {}).get("ai_runtime_device")
+    layers = row.get("gpu_layers")
+    if layers is None and probe is not None:
+        layers = probe.get("gpu_layers")
+    context = row.get("context_size")
+    if context is None and probe is not None:
+        context = probe.get("context_size")
+    model_name = row.get("model_name") or (probe or {}).get("model_name") or (probe or {}).get("ai_model_name")
+    loaded = row.get("model_loaded")
+    if loaded is None and probe is not None:
+        loaded = probe.get("model_loaded")
+    mem_model = row.get("model_memory_mb")
+    if mem_model is None and probe is not None:
+        mem_model = probe.get("model_memory_mb")
     return {
         "name": row.get("name") or "—",
         "presence_label": "En ligne" if row.get("online") else "Hors ligne",
@@ -425,6 +474,13 @@ def present_gpu_worker(row: dict) -> dict:
         "heartbeat_label": _gpu_moment(row.get("last_heartbeat")),
         "status_label": {"online": "En ligne", "offline": "Hors ligne", "degraded": "GPU indisponible"}.get(status, status),
         "probe_label": _probe_label(probe),
+        "ai_provider": row.get("ai_provider") or (probe or {}).get("ai_provider") or "—",
+        "model_name": model_name or "—",
+        "model_loaded_label": "oui" if loaded else "non",
+        "model_backend": backend or "—",
+        "gpu_layers": layers if layers is not None else "—",
+        "context_size": context if context is not None else "—",
+        "model_memory_label": f"{int(mem_model)} Mo" if isinstance(mem_model, int) else "—",
     }
 
 
@@ -515,6 +571,10 @@ async def _summary(session: AsyncSession) -> dict:
 
 
 async def _documents(session: AsyncSession, company_id: int) -> list[dict]:
+    from app.models.ai_document_analysis import AiDocumentAnalysis
+    from app.services.ai.prompts import PROMPT_VERSION
+    from app.services.ai.service import effective_model_name
+
     rows = (
         await session.execute(
             select(ExternalDocument, DocumentCompany.confidence, ExternalSource.name)
@@ -525,8 +585,29 @@ async def _documents(session: AsyncSession, company_id: int) -> list[dict]:
             .limit(10)
         )
     ).all()
+    doc_ids = [document.id for document, _, _ in rows]
+    analyses: dict[int, AiDocumentAnalysis] = {}
+    if doc_ids:
+        model_name = effective_model_name()
+        for row in (
+            await session.scalars(
+                select(AiDocumentAnalysis)
+                .where(
+                    AiDocumentAnalysis.document_id.in_(doc_ids),
+                    AiDocumentAnalysis.model_name == model_name,
+                    AiDocumentAnalysis.prompt_version == PROMPT_VERSION,
+                )
+                .order_by(AiDocumentAnalysis.id.desc())
+            )
+        ).all():
+            analyses.setdefault(row.document_id, row)
     return [
-        {"document": document, "confidence": confidence, "source": source_name}
+        {
+            "document": document,
+            "confidence": confidence,
+            "source": source_name,
+            "ai_analysis": analyses.get(document.id),
+        }
         for document, confidence, source_name in rows
     ]
 

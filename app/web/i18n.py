@@ -151,6 +151,14 @@ SYSTEM_STATUS_LABELS = {
     "error": "erreur",
 }
 
+AI_ANALYSIS_STATUS_LABELS = {
+    "PENDING": "En attente",
+    "RUNNING": "En cours",
+    "SUCCESS": "Réussie",
+    "INVALID_OUTPUT": "Sortie invalide",
+    "FAILED": "Échec",
+}
+
 WARNING_LABELS = {
     "Opportunity coverage is below ranking threshold.": (
         "La couverture de l’analyse d’opportunité est sous le seuil requis pour le classement."
@@ -188,6 +196,7 @@ _CATALOGS = {
     "document_type": DOCUMENT_TYPE_LABELS,
     "direction": DIRECTION_LABELS,
     "system_status": SYSTEM_STATUS_LABELS,
+    "ai_analysis_status": AI_ANALYSIS_STATUS_LABELS,
 }
 
 
@@ -275,6 +284,10 @@ def label_direction(value: object) -> str:
 
 def label_system_status(value: object) -> str:
     return translate_label("system_status", value)
+
+
+def label_ai_analysis_status(value: object) -> str:
+    return translate_label("ai_analysis_status", value)
 
 
 def format_number(value: object, digits: int = 2) -> str:

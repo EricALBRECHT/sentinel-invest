@@ -36,6 +36,13 @@ def record_heartbeat(connection: Redis, payload: dict[str, Any]) -> None:
         "status": payload.get("status") or "online",
         "last_heartbeat": payload.get("last_heartbeat"),
         "version": payload.get("version") or WORKER_VERSION,
+        "ai_provider": payload.get("ai_provider"),
+        "model_name": payload.get("model_name"),
+        "model_loaded": payload.get("model_loaded"),
+        "model_backend": payload.get("model_backend"),
+        "gpu_layers": payload.get("gpu_layers"),
+        "context_size": payload.get("context_size"),
+        "model_memory_mb": payload.get("model_memory_mb"),
     }
     connection.set(worker_key(name), json.dumps(body), ex=HEARTBEAT_TTL_SECONDS)
 

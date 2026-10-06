@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.company import Company
 from app.models.intelligence import ExternalDocument, IntelligenceEvent
 from app.schemas.intelligence import CompanyEventRead, DocumentRead, EventRead, NewsItemRead
+from app.services.ai.service import get_latest_analysis, serialize_analysis
 from app.services.intelligence.documents import company_events, company_news
 
 router = APIRouter(tags=["intelligence"], dependencies=[Depends(get_current_user)])
@@ -52,6 +53,17 @@ async def document_detail(document_id: int, db: AsyncSession = Depends(get_db)) 
     if document is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return document
+
+
+@router.get("/intelligence/documents/{document_id}/ai-analysis")
+async def document_ai_analysis(document_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    document = await db.get(ExternalDocument, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    row = await get_latest_analysis(db, document_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No AI analysis for this document")
+    return serialize_analysis(row).model_dump()
 
 
 @router.get("/intelligence/events/{event_id}", response_model=EventRead)

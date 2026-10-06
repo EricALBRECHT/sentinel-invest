@@ -1,5 +1,6 @@
 """HTML routes. They do not replace the JSON API."""
 
+import asyncio
 import json
 from urllib.parse import quote
 
@@ -51,6 +52,7 @@ for _name in (
     "label_document_type",
     "label_direction",
     "label_system_status",
+    "label_ai_analysis_status",
 ):
     templates.env.globals[_name] = getattr(i18n, _name)
 
@@ -247,3 +249,17 @@ async def admin_bootstrap(request: Request, db: AsyncSession = Depends(get_db)):
 
     await bootstrap_universe_data(db)
     return RedirectResponse("/admin/view", status_code=303)
+
+
+@router.post("/companies/{company_id}/documents/{document_id}/ai-analyze")
+async def company_document_ai_analyze(
+    request: Request,
+    company_id: int,
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    await page_user(request, db)
+    from app.jobs.queues import enqueue_ai_document_analysis
+
+    await asyncio.to_thread(enqueue_ai_document_analysis, document_id)
+    return RedirectResponse(f"/companies/{company_id}/view", status_code=303)

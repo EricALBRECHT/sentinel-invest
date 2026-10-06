@@ -11,6 +11,8 @@ COPY alembic ./alembic
 COPY alembic.ini .
 COPY pytest.ini .
 COPY tests ./tests
+COPY deploy ./deploy
+COPY docker-compose.yml .
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 

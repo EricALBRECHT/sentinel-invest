@@ -349,6 +349,26 @@ def enqueue_discovery_verification_batch() -> dict:
     )
 
 
+def ai_document_job_id(document_id: int) -> str:
+    return f"ai-document-{document_id}"
+
+
+def ai_document_gpu_job_id(document_id: int) -> str:
+    return f"ai-document-gpu-{document_id}"
+
+
+def enqueue_ai_document_analysis(document_id: int, force: bool = False) -> dict:
+    return enqueue_call(
+        QUEUE_INTELLIGENCE,
+        "app.jobs.ai_document.run_ai_document_analysis",
+        document_id,
+        force,
+        job_id=ai_document_job_id(document_id),
+        retry=intelligence_retry(),
+        timeout=1200,
+    )
+
+
 def gpu_probe_job_id() -> str:
     return "gpu-system-probe"
 

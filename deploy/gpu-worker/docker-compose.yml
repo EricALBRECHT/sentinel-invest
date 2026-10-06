@@ -19,6 +19,15 @@ services:
       GPU_DEVICE: ${GPU_DEVICE:-0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       NVIDIA_VISIBLE_DEVICES: ${GPU_DEVICE:-0}
+      # Host AI_MODEL_CACHE is mounted here; force container path.
+      AI_MODEL_CACHE: /models
+      AI_PROVIDER: ${AI_PROVIDER:-local}
+      AI_MODEL_NAME: ${AI_MODEL_NAME:-Qwen2.5-1.5B-Instruct-Q4_K_M}
+      AI_MAX_CONTEXT: ${AI_MAX_CONTEXT:-2048}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-768}
+      AI_TEMPERATURE: ${AI_TEMPERATURE:-0}
+      AI_GPU_LAYERS: ${AI_GPU_LAYERS:-20}
+      SENTINEL_AI_STUB: ${SENTINEL_AI_STUB:-0}
     volumes:
       - ${AI_MODEL_CACHE:?set AI_MODEL_CACHE}:/models
     deploy:
@@ -33,7 +42,7 @@ services:
       interval: 30s
       timeout: 15s
       retries: 3
-      start_period: 25s
+      start_period: 90s
     logging:
       driver: json-file
       options:

@@ -1,0 +1,3 @@
+# AI model files (GGUF) — never commit weights
+*.gguf
+sentinel-models/

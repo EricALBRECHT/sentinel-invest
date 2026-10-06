@@ -1,2 +1,3 @@
 redis
 rq
+# llama-cpp-python is compiled in the Dockerfile builder stage with CUDA sm_61.

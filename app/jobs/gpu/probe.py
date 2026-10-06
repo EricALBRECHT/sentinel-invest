@@ -58,8 +58,11 @@ def query_gpu(device: str = "0") -> dict[str, Any]:
 
 
 def build_probe_payload(device: str | None = None) -> dict[str, Any]:
+    from app.jobs.gpu.model_runtime import env_context, env_gpu_layers, env_model_name, env_model_path, runtime_status
+
     chosen = device if device is not None else os.environ.get("GPU_DEVICE", "0")
     gpu = query_gpu(chosen)
+    ai_runtime = runtime_status()
     return {
         "worker": worker_name(),
         "gpu_available": bool(gpu["available"]),
@@ -67,6 +70,16 @@ def build_probe_payload(device: str | None = None) -> dict[str, Any]:
         "gpu_memory_total_mb": gpu["memory_total"],
         "gpu_memory_free_mb": gpu["memory_free"],
         "cuda_visible": bool(gpu["available"]),
+        "ai_provider": os.environ.get("AI_PROVIDER", "local"),
+        "model_name": env_model_name(),
+        "ai_model_name": env_model_name(),
+        "ai_model_path": env_model_path(),
+        "model_loaded": bool(ai_runtime.get("model_loaded")),
+        "model_backend": ai_runtime.get("model_backend"),
+        "gpu_layers": ai_runtime.get("gpu_layers") if ai_runtime.get("gpu_layers") is not None else env_gpu_layers(),
+        "context_size": ai_runtime.get("context_size") if ai_runtime.get("context_size") is not None else env_context(),
+        "model_memory_mb": ai_runtime.get("model_memory_mb"),
+        "ai_runtime_device": ai_runtime.get("model_backend") or ai_runtime.get("device"),
         "timestamp": utc_now(),
     }
 
@@ -91,7 +104,10 @@ def _job_connection():
 
 
 def heartbeat_payload(gpu: dict[str, Any] | None = None) -> dict[str, Any]:
+    from app.jobs.gpu.model_runtime import env_context, env_gpu_layers, env_model_name, runtime_status
+
     current = gpu if gpu is not None else query_gpu(os.environ.get("GPU_DEVICE", "0"))
+    ai = runtime_status()
     return {
         "name": worker_name(),
         "hostname": _hostname(),
@@ -100,6 +116,13 @@ def heartbeat_payload(gpu: dict[str, Any] | None = None) -> dict[str, Any]:
         "status": "online" if current["available"] else "degraded",
         "last_heartbeat": utc_now(),
         "version": WORKER_VERSION,
+        "ai_provider": os.environ.get("AI_PROVIDER", "local"),
+        "model_name": env_model_name(),
+        "model_loaded": bool(ai.get("model_loaded")),
+        "model_backend": ai.get("model_backend"),
+        "gpu_layers": ai.get("gpu_layers") if ai.get("gpu_layers") is not None else env_gpu_layers(),
+        "context_size": ai.get("context_size") if ai.get("context_size") is not None else env_context(),
+        "model_memory_mb": ai.get("model_memory_mb"),
     }
 
 

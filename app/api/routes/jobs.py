@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.jobs.maintenance import enqueue_selected
 from app.jobs.market_sync import enqueue_selected_market
 from app.jobs.queues import (
+    enqueue_ai_document_analysis,
     enqueue_discovery_expansion,
     enqueue_discovery_verification_batch,
     enqueue_gpu_probe,
@@ -19,6 +20,7 @@ from app.jobs.queues import (
     enqueue_supply_chain,
     enqueue_technical_backfill,
 )
+from app.models.intelligence import ExternalDocument
 from app.models.company import Company
 from app.schemas.jobs import DueSyncRead, JobDetailRead, JobEnqueueRead
 from app.services.jobs.status import collect_job_counts, describe_job
@@ -136,6 +138,27 @@ async def enqueue_company_discovery_expansion(
 @router.post("/verify-discovered-candidates", response_model=JobEnqueueRead)
 async def enqueue_discovery_verification() -> JSONResponse:
     queued = await asyncio.to_thread(enqueue_discovery_verification_batch)
+    code = status.HTTP_202_ACCEPTED if queued["enqueued"] else status.HTTP_200_OK
+    return JSONResponse(status_code=code, content=JobEnqueueRead(**queued).model_dump())
+
+
+@router.post("/ai-document/{document_id}", response_model=JobEnqueueRead)
+async def enqueue_document_ai_analysis(
+    document_id: int,
+    force: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    document = await db.get(ExternalDocument, document_id)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if not (document.content_text or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Document has no analyzable text")
+    if force:
+        from app.services.ai.service import ensure_analysis_row
+
+        await ensure_analysis_row(db, document_id, force=True)
+        await db.commit()
+    queued = await asyncio.to_thread(enqueue_ai_document_analysis, document_id, force)
     code = status.HTTP_202_ACCEPTED if queued["enqueued"] else status.HTTP_200_OK
     return JSONResponse(status_code=code, content=JobEnqueueRead(**queued).model_dump())
 

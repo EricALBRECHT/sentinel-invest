@@ -31,6 +31,7 @@ from app.models.supply_chain import (  # noqa: F401
 )
 from app.models.universe_membership import UniverseMembership  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.ai_document_analysis import AiDocumentAnalysis  # noqa: F401
 
 config = context.config
 
