@@ -12,6 +12,18 @@ logger = logging.getLogger("sentinel.ai.validation")
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 _COMPANY_ALIASES = ("relation_type",)
+# Bare "partner(s)" is too weak ("manufacturer partners" ≠ company role PARTNER).
+_PARTNER_EVIDENCE = (
+    "partnership",
+    "partnered",
+    "strategic partner",
+    "alliance",
+    "co-engineer",
+    "coengineering",
+    "collaborate",
+    "collaboration",
+    "joint venture",
+)
 
 
 def extract_json_object(raw: str) -> dict:
@@ -50,10 +62,30 @@ def normalize_company_roles(payload: dict) -> list[str]:
     return normalized
 
 
+def enforce_partner_evidence(payload: dict) -> None:
+    """PARTNER is allowed only when evidence explicitly supports a partnership."""
+    companies = payload.get("companies")
+    if not isinstance(companies, list):
+        return
+    for index, company in enumerate(companies):
+        if not isinstance(company, dict):
+            continue
+        role = str(company.get("role") or "").strip().upper()
+        if role != "PARTNER":
+            continue
+        evidence = str(company.get("evidence") or "").casefold()
+        if any(hint in evidence for hint in _PARTNER_EVIDENCE):
+            continue
+        raise ValueError(
+            f"companies[{index}].role=PARTNER requires explicit partnership evidence in evidence"
+        )
+
+
 def validate_ai_result(raw: str) -> tuple[AiDocumentResult, dict]:
     payload = extract_json_object(raw)
     normalized_fields = normalize_company_roles(payload)
     logger.info("normalized_fields=%s", ",".join(normalized_fields))
+    enforce_partner_evidence(payload)
     try:
         parsed = AiDocumentResult.model_validate(payload)
     except ValidationError as exc:

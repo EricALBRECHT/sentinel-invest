@@ -8,6 +8,42 @@ from typing import Any
 from app.jobs.gpu import WORKER_VERSION
 from app.jobs.gpu.registry import save_probe
 
+
+def reload_context(n_ctx: int = 4096) -> dict[str, Any]:
+    """Reload llama.cpp with a new n_ctx (experiment helper). Safe to call via RQ."""
+    from app.jobs.gpu.model_runtime import ensure_context_size, query_vram_mb, runtime_status
+
+    before = query_vram_mb()
+    try:
+        result = ensure_context_size(int(n_ctx))
+        status = runtime_status()
+        after = query_vram_mb()
+        return {
+            "ok": True,
+            "error": None,
+            "requested_n_ctx": int(n_ctx),
+            "reloaded": result.get("reloaded"),
+            "context_size": status.get("context_size"),
+            "backend": status.get("model_backend"),
+            "gpu_layers": status.get("gpu_layers"),
+            "model_memory_mb": status.get("model_memory_mb"),
+            "vram_before_mb": before.get("used"),
+            "vram_after_load_mb": after.get("used"),
+            "vram_free_mb": after.get("free"),
+            "vram_total_mb": after.get("total"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        after = query_vram_mb()
+        return {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "requested_n_ctx": int(n_ctx),
+            "vram_before_mb": before.get("used"),
+            "vram_after_load_mb": after.get("used"),
+            "vram_free_mb": after.get("free"),
+            "vram_total_mb": after.get("total"),
+        }
+
 _EMPTY = {"available": False, "name": None, "memory_total": None, "memory_free": None}
 
 

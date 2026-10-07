@@ -26,9 +26,68 @@ from app.services.intelligence.deduplication import document_identity, find_dupl
 from app.services.intelligence.events import extract_events
 from app.services.intelligence.providers import provider_for
 from app.services.intelligence.providers.base import NormalizedDocument
+from app.services.intelligence.providers.text import looks_truncated
 from app.services.intelligence.sources import NEWS_SYNC_SOURCE, ensure_aliases
 
 _ACTIVE = "text_only_v1"
+
+
+async def backfill_document_article_body(
+    session: AsyncSession,
+    document_id: int,
+    *,
+    provider=None,
+) -> dict:
+    """Replace an RSS teaser with the article page body when the stored text is truncated."""
+    from app.services.intelligence.providers.rss import RssAtomProvider
+
+    document = await session.get(ExternalDocument, document_id)
+    if document is None:
+        return {"document_id": document_id, "updated": False, "reason": "missing"}
+    before = len(document.content_text or "")
+    if not looks_truncated(document.content_text):
+        return {"document_id": document_id, "updated": False, "reason": "not_truncated", "chars_before": before}
+    if not document.url:
+        return {"document_id": document_id, "updated": False, "reason": "missing_url", "chars_before": before}
+    rss = provider or RssAtomProvider()
+    draft = NormalizedDocument(
+        external_id=document.external_id,
+        url=document.url,
+        title=document.title,
+        published_at=document.published_at,
+        language=document.language,
+        author=document.author,
+        summary=document.summary,
+        content_text=document.content_text,
+        document_type=document.document_type or "NEWS_ARTICLE",
+        metadata=dict(document.metadata_json or {}),
+    )
+    enriched = await rss.enrich_truncated_document(draft)
+    after = len(enriched.content_text or "")
+    if after <= before:
+        return {
+            "document_id": document_id,
+            "updated": False,
+            "reason": "no_longer_body",
+            "chars_before": before,
+            "chars_after": after,
+        }
+    identity = document_identity(document.external_id, document.url, document.title, enriched.content_text)
+    document.content_text = enriched.content_text
+    document.content_hash = identity["content_hash"]
+    metadata = dict(document.metadata_json or {})
+    metadata.update(enriched.metadata or {})
+    document.metadata_json = metadata
+    document.updated_at = datetime.now(timezone.utc)
+    await session.commit()
+    return {
+        "document_id": document_id,
+        "updated": True,
+        "reason": "article_page",
+        "chars_before": before,
+        "chars_after": after,
+        "url": document.url,
+    }
 
 
 async def ingest_source(

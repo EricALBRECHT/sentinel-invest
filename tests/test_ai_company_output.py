@@ -13,19 +13,35 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _namespace(name: str, path: Path) -> None:
-    module = types.ModuleType(name)
-    module.__path__ = [str(path)]
-    module.__package__ = name
-    sys.modules[name] = module
+def _load_validate_ai_result():
+    """Import validation without executing app.services.ai.__init__ (DB pull).
+
+    Restore any pre-existing package modules so later tests still see the real app.
+    """
+    package_names = ("app", "app.services", "app.services.ai")
+    stashed = {name: sys.modules[name] for name in package_names if name in sys.modules}
+
+    def _namespace(name: str, path: Path) -> None:
+        module = types.ModuleType(name)
+        module.__path__ = [str(path)]
+        module.__package__ = name
+        sys.modules[name] = module
+
+    try:
+        _namespace("app", ROOT / "app")
+        _namespace("app.services", ROOT / "app" / "services")
+        _namespace("app.services.ai", ROOT / "app" / "services" / "ai")
+        from app.services.ai.validation import validate_ai_result  # noqa: PLC0415
+        return validate_ai_result
+    finally:
+        for name in package_names:
+            if name in stashed:
+                sys.modules[name] = stashed[name]
+            else:
+                sys.modules.pop(name, None)
 
 
-# Load the validator without app.services.ai.__init__, which pulls the database.
-_namespace("app", ROOT / "app")
-_namespace("app.services", ROOT / "app" / "services")
-_namespace("app.services.ai", ROOT / "app" / "services" / "ai")
-
-from app.services.ai.validation import validate_ai_result  # noqa: E402
+validate_ai_result = _load_validate_ai_result()
 
 _VALID = {
     "summary": "The document says NVIDIA announced a partnership.",

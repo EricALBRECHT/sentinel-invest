@@ -1,0 +1,15 @@
+<section id="dashboard-news-alerts" class="panel news-block sentinel-live"
+         hx-get="/dashboard/fragments/news-alerts"
+         hx-trigger="every {{ poll_news_alerts }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h3>Alertes</h3>
+  {% if news_alerts %}
+  <ul class="alert-list">
+    {% for alert in news_alerts %}
+    <li class="badge {{ alert.tone }}">{{ alert.text }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted ok-line"><span class="badge good">OK</span> Tout est opérationnel</p>
+  {% endif %}
+</section>

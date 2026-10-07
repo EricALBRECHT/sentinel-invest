@@ -1,0 +1,42 @@
+<section id="dashboard-news-ai" class="panel news-block sentinel-live"
+         hx-get="/dashboard/fragments/news-ai"
+         hx-trigger="every {{ poll_news_ai }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h3>IA / GPU</h3>
+  <ul class="facts">
+    <li>
+      {{ news_ai_gpu.worker_name or "sentinel-gpu-01" }}
+      {% if news_ai_gpu.gpu_online %}
+      <span class="badge good">En ligne</span>
+      {% else %}
+      <span class="badge bad">Hors ligne</span>
+      {% endif %}
+    </li>
+    <li>File GPU <strong>{% if news_ai_gpu.gpu_queued is not none %}{{ news_ai_gpu.gpu_queued }}{% else %}—{% endif %}</strong></li>
+    <li>Jobs démarrés <strong>{% if news_ai_gpu.gpu_started is not none %}{{ news_ai_gpu.gpu_started }}{% else %}—{% endif %}</strong></li>
+    <li>
+      Job en cours
+      {% if news_ai_gpu.current_job %}
+      <strong>{{ news_ai_gpu.current_job.job_id }}</strong>
+      {% if news_ai_gpu.current_job.document_id %} · doc #{{ news_ai_gpu.current_job.document_id }}{% endif %}
+      {% else %}
+      <strong>—</strong>
+      {% endif %}
+    </li>
+    <li>SUCCESS 24 h <strong>{{ display(news_ai_gpu.success_24h, 0) }}</strong></li>
+    <li>INVALID_OUTPUT 24 h <strong>{{ display(news_ai_gpu.invalid_24h, 0) }}</strong></li>
+    <li>FAILED 24 h <strong>{{ display(news_ai_gpu.failed_24h, 0) }}</strong></li>
+    <li>Durée moy. GPU
+      <strong>
+        {% if news_ai_gpu.avg_duration_ms is not none %}{{ display(news_ai_gpu.avg_duration_ms / 1000, 1) }} s{% else %}—{% endif %}
+      </strong>
+    </li>
+    <li>Tokens moy. in/out
+      <strong>
+        {% if news_ai_gpu.avg_tokens_input is not none %}{{ display(news_ai_gpu.avg_tokens_input, 0) }}{% else %}—{% endif %}
+        /
+        {% if news_ai_gpu.avg_tokens_output is not none %}{{ display(news_ai_gpu.avg_tokens_output, 0) }}{% else %}—{% endif %}
+      </strong>
+    </li>
+  </ul>
+</section>

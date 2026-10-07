@@ -1,0 +1,46 @@
+<section id="dashboard-news-sources" class="panel news-block sentinel-live"
+         hx-get="/dashboard/fragments/news-sources"
+         hx-trigger="every {{ poll_news_sources }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h3>Sources</h3>
+  <table class="compact">
+    <thead>
+      <tr>
+        <th>Nom</th>
+        <th>Type</th>
+        <th>État</th>
+        <th>Dernier fetch</th>
+        <th>Statut</th>
+        <th>Docs 24 h</th>
+        <th>Long. moy.</th>
+        <th>Dernier doc</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for source in news_sources %}
+      <tr class="{% if not source.is_active %}is-inactive{% elif source.has_error %}is-error{% elif source.stale %}is-stale{% endif %}{% if source.short_docs %} is-short{% endif %}">
+        <td>{{ source.name }}</td>
+        <td>{{ source.source_type }}</td>
+        <td>{% if source.is_active %}<span class="badge good">Active</span>{% else %}<span class="badge muted">Inactive</span>{% endif %}</td>
+        <td>{{ display(source.last_poll_at or source.last_success_at) }}</td>
+        <td>
+          {% if source.status == "ok" %}<span class="badge good">OK</span>
+          {% elif source.status == "error" %}<span class="badge bad">Erreur</span>
+          {% elif source.status == "stale" %}<span class="badge warn">Ancien</span>
+          {% else %}<span class="badge muted">Inactive</span>{% endif %}
+        </td>
+        <td>{{ display(source.docs_24h, 0) }}</td>
+        <td>{% if source.avg_chars is not none %}{{ display(source.avg_chars, 0) }}{% else %}—{% endif %}</td>
+        <td>
+          {% if source.last_document_id %}
+          <a href="/intelligence/documents/{{ source.last_document_id }}/view">#{{ source.last_document_id }}</a>
+          {% if source.last_document_title %}<span class="muted"> {{ source.last_document_title[:40] }}{% if (source.last_document_title or '')|length > 40 %}…{% endif %}</span>{% endif %}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Aucune source configurée.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

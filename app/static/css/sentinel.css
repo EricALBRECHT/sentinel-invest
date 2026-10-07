@@ -158,6 +158,65 @@ th { color: var(--muted); font-weight: 600; }
 
 .live-strip h2 { font-size: 14px; margin-bottom: 8px; }
 
+.news-section { margin: 16px 0 20px; }
+.news-heading h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.news-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1.4fr;
+  gap: 10px;
+}
+.news-block { margin: 0; min-width: 0; }
+.news-block h3 { font-size: 14px; margin: 0 0 8px; }
+table.compact { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.compact th, table.compact td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+table.compact tr.is-inactive,
+table.compact tr.is-stale { opacity: 0.85; }
+table.compact tr.is-error td:first-child,
+table.compact tr.is-short td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+table.compact tr.is-error td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+.alert-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.alert-list .badge { display: block; white-space: normal; text-align: left; line-height: 1.35; }
+.ok-line { margin: 0; }
+.button-link {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--chip);
+  text-decoration: none;
+  color: inherit;
+}
+.inline-actions { margin: 8px 0 12px; }
+.job-banner { margin: 0 0 10px; }
+.error-box {
+  border: 1px solid var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin: 10px 0;
+}
+.error-box h3 { margin: 0 0 6px; font-size: 14px; }
+.raw-output, .doc-excerpt {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  max-height: 320px;
+  overflow: auto;
+  background: #101317;
+  padding: 10px;
+  border-radius: 6px;
+}
+.evidence { max-width: 280px; }
+.panel.nested { margin-top: 10px; }
+
+@media (max-width: 960px) {
+  .news-grid { grid-template-columns: 1fr; }
+}
+
 .sentinel-live.is-refreshing {
   outline: 1px solid var(--line);
   opacity: 0.92;

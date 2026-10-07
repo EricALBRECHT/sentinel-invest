@@ -23,12 +23,17 @@ from app.models.company import Company
 from app.models.intelligence import CompanyAlias, DocumentCompany, ExternalDocument, ExternalSource, IntelligenceEvent
 from app.services.intelligence.company_matching import CompanyIdentity, match_companies
 from app.services.intelligence.events import extract_events
-from app.services.intelligence.ingestion import ingest_source
+from app.services.intelligence.ingestion import backfill_document_article_body, ingest_source
 from app.services.intelligence.providers.base import FetchBatch, NormalizedDocument
 from app.services.intelligence.providers.http import HttpText
 from app.services.intelligence.providers.robots import robots_policy
 from app.services.intelligence.providers.rss import RssAtomProvider, parse_feed
-from app.services.intelligence.providers.text import canonical_url, plain_text
+from app.services.intelligence.providers.text import (
+    canonical_url,
+    extract_article_plain_text,
+    looks_truncated,
+    plain_text,
+)
 from app.services.intelligence.schedule import interval_hours
 from app.services.intelligence.sources import V1_CATALOG, create_source, register_v1_catalog
 from tests.test_quality_score import _headers
@@ -114,6 +119,11 @@ def test_events_use_explainable_importance():
 def test_canonical_url_robots_and_feed_text_stay_plain():
     assert canonical_url("https://Example.com/a/b/?utm_source=x&id=1#frag") == "https://example.com/a/b?id=1"
     assert plain_text("<p>Hello <b>world</b></p>", 100) == "Hello world"
+    assert looks_truncated("Short teaser with missing context […]") is True
+    assert looks_truncated("A complete sentence without ellipsis markers.") is False
+    html = "<html><body><div class='entry-content'><p>" + ("Full article body. " * 40) + "</p></div></body></html>"
+    body = extract_article_plain_text(html, 20000)
+    assert body is not None and len(body) > 500
     allowed, delay = robots_policy("User-agent: *\nDisallow: /private\nCrawl-delay: 10\n", "Sentinel", "https://news.example/releases.xml")
     blocked, _ = robots_policy("User-agent: *\nDisallow: /cgi-bin\n", "Sentinel", "https://www.sec.gov/cgi-bin/browse-edgar")
     assert allowed is True
@@ -162,6 +172,118 @@ async def test_rss_provider_respects_robots(monkeypatch):
     assert batch.error == "robots.txt disallows this feed"
     assert batch.documents == []
     assert http.calls == ["https://news.example/robots.txt"]
+
+
+async def test_rss_enriches_truncated_teaser_from_article_page():
+    feed = """<?xml version="1.0"?>
+    <rss><channel>
+      <item>
+        <title>NVIDIA DGX Spark</title>
+        <link>https://blogs.example/article</link>
+        <guid>dgx-1</guid>
+        <description>Teaser only for local AI […] </description>
+      </item>
+    </channel></rss>"""
+    article = (
+        "<html><body><article><div class='entry-content'><p>"
+        + ("NVIDIA DGX Spark expands local AI memory for developers. " * 30)
+        + "</p></div></article></body></html>"
+    )
+
+    class Scripted:
+        def __init__(self):
+            self.calls = []
+
+        def set_crawl_delay(self, url, seconds):
+            return None
+
+        async def get_text(self, url, user_agent=None):
+            self.calls.append(url)
+            if url.endswith("/robots.txt"):
+                return HttpText(200, "User-agent: *\nAllow: /\n", url)
+            if url.endswith("/releases.xml"):
+                return HttpText(200, feed, url)
+            if url.endswith("/article"):
+                return HttpText(200, article, url)
+            return HttpText(404, "", url)
+
+    provider = RssAtomProvider(http=Scripted())
+    source = ExternalSource(
+        name="NVIDIA newsroom",
+        source_type="COMPANY_IR",
+        base_url="https://blogs.example/releases.xml",
+        provider="rss",
+        trust_level="HIGH",
+        poll_interval_minutes=60,
+        metadata_json={"document_type": "PRESS_RELEASE"},
+    )
+    batch = await provider.fetch_since(source, NOW - timedelta(days=7))
+    assert batch.error is None
+    assert len(batch.documents) == 1
+    doc = batch.documents[0]
+    assert looks_truncated(doc.content_text) is False
+    assert len(doc.content_text or "") > 500
+    assert doc.metadata["content_source"] == "article_page"
+
+
+async def test_backfill_document_article_body(session_factory):
+    class Scripted:
+        def set_crawl_delay(self, url, seconds):
+            return None
+
+        async def get_text(self, url, user_agent=None):
+            if url.endswith("/robots.txt"):
+                return HttpText(200, "User-agent: *\nAllow: /\n", url)
+            return HttpText(
+                200,
+                "<html><body><article><div class='post-content'><p>"
+                + ("Full NVIDIA CoreWeave partnership article body. " * 40)
+                + "</p></div></article></body></html>",
+                url,
+            )
+
+    async with session_factory() as session:
+        source = await create_source(
+            session,
+            name="NVIDIA newsroom",
+            source_type="COMPANY_IR",
+            base_url="https://blogs.example/releases.xml",
+            provider="rss",
+            trust_level="HIGH",
+            poll_interval_minutes=60,
+            metadata={"document_type": "PRESS_RELEASE"},
+        )
+        document = ExternalDocument(
+            source_id=source.id,
+            external_id="coreweave-1",
+            url="https://blogs.example/coreweave",
+            title="NVIDIA and CoreWeave",
+            published_at=NOW,
+            fetched_at=NOW,
+            summary="Teaser […] ",
+            content_text="Teaser about NVIDIA and CoreWeave […]",
+            content_hash="abc",
+            document_type="PRESS_RELEASE",
+            metadata_json={"content_source": "rss_item"},
+            created_at=NOW,
+            updated_at=NOW,
+        )
+        session.add(document)
+        await session.commit()
+        document_id = document.id
+        before = len(document.content_text or "")
+        result = await backfill_document_article_body(
+            session,
+            document_id,
+            provider=RssAtomProvider(http=Scripted()),
+        )
+        refreshed = await session.get(ExternalDocument, document_id)
+
+    assert result["updated"] is True
+    assert result["chars_before"] == before
+    assert result["chars_after"] > before
+    assert looks_truncated(refreshed.content_text) is False
+    assert refreshed.metadata_json["content_source"] == "article_page"
 
 
 async def test_ingestion_deduplicates_and_keeps_the_recent_window(session_factory):

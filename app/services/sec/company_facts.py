@@ -41,6 +41,14 @@ from app.services.sec.mappings import (
 Q4_FRAME = re.compile(r"CY\d{4}Q4$")
 PERIOD_RANK = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4, "FY": 5}
 MONEY_TOLERANCE = Decimal("1")
+# Per-share EPS never reaches share-count magnitude. NUMERIC(12,4) max is
+# ~1e8; BRK.A EPS is large but still far below 1e6. SWK 10-Q/A filings
+# mis-tag WeightedAverage shares under EarningsPerShare* / USD/shares.
+EPS_FIELDS = frozenset({"eps_basic", "eps_diluted"})
+EPS_ABS_LIMIT = Decimal("1000000")
+EPS_SHARE_RATIO_MIN = Decimal("0.5")
+EPS_SHARE_RATIO_MAX = Decimal("1.5")
+EPS_SHARE_COMPARE_FLOOR = Decimal("1000")
 
 
 @dataclass(frozen=True)
@@ -494,6 +502,7 @@ def _build_period(facts: list[RawFact], identity: PeriodIdentity, cik: str) -> _
         conflicts.extend(selection.conflicts or [])
 
     _note_cover_page_shares(facts, identity, selected, conflicts, fallbacks)
+    _reject_implausible_eps(selected, identity, conflicts)
 
     total_debt, debt_fact, debt_concept, debt_conflicts, debt_inclusive = _resolve_debt(
         facts, identity
@@ -544,21 +553,38 @@ def _select_concept(
     identity: PeriodIdentity,
 ) -> _Selection:
     matched: list[tuple[str, RawFact, bool]] = []
+    conflicts: list[str] = []
+    label = f"{identity.fiscal_year} {identity.fiscal_period} {spec.field}"
     for concept in spec.concepts:
         candidates = _candidates(facts, concept, identity, spec.kind)
         if not candidates:
             continue
+        if spec.field in EPS_FIELDS:
+            plausible = [fact for fact in candidates if eps_value_plausible(fact.value)]
+            rejected = len(candidates) - len(plausible)
+            if rejected:
+                conflicts.append(
+                    f"{label}: ignored {rejected} {concept} fact(s) with non-EPS magnitude "
+                    f"(likely mis-tagged share counts)"
+                )
+            candidates = plausible
+            if not candidates:
+                continue
         chosen, disagreed = _choose(candidates)
         matched.append((concept, chosen, disagreed))
 
     if not matched:
-        return _Selection()
+        return _Selection(conflicts=conflicts or None)
 
     concept, fact, disagreed = matched[0]
-    conflicts: list[str] = []
-    label = f"{identity.fiscal_year} {identity.fiscal_period} {spec.field}"
     if disagreed:
-        values = sorted({item.value for item in _candidates(facts, concept, identity, spec.kind)})
+        values = sorted(
+            {
+                item.value
+                for item in _candidates(facts, concept, identity, spec.kind)
+                if spec.field not in EPS_FIELDS or eps_value_plausible(item.value)
+            }
+        )
         conflicts.append(
             f"{label}: kept {concept}={fact.value} from {fact.accession} filed {fact.filed}; "
             f"other filings reported {values}"
@@ -569,6 +595,39 @@ def _select_concept(
             f"{label}: kept {concept}={fact.value} and ignored {other_concept}={other_fact.value}"
         )
     return _Selection(fact=fact, concept=concept, conflicts=conflicts)
+
+
+def eps_value_plausible(value: Decimal, *, shares: Decimal | None = None) -> bool:
+    """Reject share-count magnitudes mis-filed under EarningsPerShare* concepts."""
+    if abs(value) >= EPS_ABS_LIMIT:
+        return False
+    if shares is not None and shares > 0 and abs(value) >= EPS_SHARE_COMPARE_FLOOR:
+        ratio = abs(value) / shares
+        if EPS_SHARE_RATIO_MIN <= ratio <= EPS_SHARE_RATIO_MAX:
+            return False
+    return True
+
+
+def _reject_implausible_eps(
+    selected: dict[str, RawFact],
+    identity: PeriodIdentity,
+    conflicts: list[str],
+) -> None:
+    shares_fact = selected.get("shares_outstanding")
+    shares = shares_fact.value if shares_fact is not None else None
+    for field in EPS_FIELDS:
+        fact = selected.get(field)
+        if fact is None:
+            continue
+        if eps_value_plausible(fact.value, shares=shares):
+            continue
+        conflicts.append(
+            f"{identity.fiscal_year} {identity.fiscal_period} {field}: "
+            f"rejected {fact.concept}={fact.value} (implausible for EPS"
+            + (f"; shares_outstanding={shares}" if shares is not None else "")
+            + ")"
+        )
+        del selected[field]
 
 
 def _candidates(

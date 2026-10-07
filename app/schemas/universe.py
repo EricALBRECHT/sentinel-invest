@@ -64,7 +64,10 @@ class UniverseIndexRefreshRead(BaseModel):
     source_documentation: str
     fetched: int
     created_companies: int
+    updated_companies: int = 0
     existing_companies: int
+    skipped_companies: int = 0
+    conflict_companies: int = 0
     memberships_added: int
     memberships_existing: int
     memberships_removed: int

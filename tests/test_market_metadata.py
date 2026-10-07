@@ -19,7 +19,7 @@ from app.services.market.metadata import (
 )
 from app.services.market.provider import MARKET_SOURCE, DailyBar, MarketQuote
 from app.services.market.calculations import build_snapshot
-from app.services.market.symbols import resolve_provider_symbol
+from app.services.market.symbols import normalize_yahoo_symbol, resolve_provider_symbol
 from app.services.market.sync import execute_market_sync
 from tests.test_market import FakeMarket, _bar, _series
 
@@ -406,3 +406,34 @@ async def test_provider_alias_replaces_the_requested_symbol(session_factory):
             provider=RecordingMarket(_series(2), MarketQuote(currency="EUR", price=Decimal("1"))),
         )
     assert seen == ["STMPA.PA", "STMPA.PA"]
+
+
+def test_yahoo_share_class_symbols_use_hyphen():
+    assert normalize_yahoo_symbol("BRK.B") == "BRK-B"
+    assert normalize_yahoo_symbol("BF.B") == "BF-B"
+    assert normalize_yahoo_symbol("BRK.A") == "BRK-A"
+    assert normalize_yahoo_symbol("brk.b") == "BRK-B"
+    # Exchange suffixes stay dotted for Yahoo.
+    assert normalize_yahoo_symbol("STM.PA") == "STM.PA"
+    assert normalize_yahoo_symbol("NVDA") == "NVDA"
+
+
+async def test_resolve_provider_symbol_normalizes_yahoo_share_class(session_factory):
+    async with session_factory() as session:
+        brk = Company(name="Berkshire", ticker="BRK.B", market_symbol="BRK.B")
+        bf = Company(name="Brown Forman", ticker="BF.B", market_symbol="BF.B")
+        session.add_all([brk, bf])
+        await session.commit()
+        await session.refresh(brk)
+        await session.refresh(bf)
+        assert await resolve_provider_symbol(session, brk, "yahoo") == "BRK-B"
+        assert await resolve_provider_symbol(session, bf, "yahoo") == "BF-B"
+        # Sentinel storage unchanged.
+        assert brk.market_symbol == "BRK.B"
+        assert bf.ticker == "BF.B"
+        # Explicit alias still wins.
+        session.add(
+            MarketProviderSymbol(company_id=brk.id, provider="yahoo", provider_symbol="BRK-B.ALIAS")
+        )
+        await session.commit()
+        assert await resolve_provider_symbol(session, brk, "yahoo") == "BRK-B.ALIAS"

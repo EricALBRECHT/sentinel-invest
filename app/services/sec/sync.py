@@ -5,8 +5,9 @@ restates a period updates that row and replaces the accession number with the
 filing that supplied the kept values.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 import logging
 import re
 from typing import Protocol
@@ -16,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.company import Company
 from app.models.financial_metric import FinancialMetric
-from app.services.sec.company_facts import ParsedPeriod, parse_company_facts
+from app.services.sec.company_facts import (
+    ParsedPeriod,
+    eps_value_plausible,
+    parse_company_facts,
+)
 from app.services.sec.errors import MissingSecCik
 from app.services.sec.mappings import SEC_SOURCE
 
@@ -95,15 +100,19 @@ async def sync_sec_financials(
     created = 0
     updated = 0
     skipped = 0
+    sanitized_periods: list[ParsedPeriod] = []
     for period in parsed.periods:
-        outcome = await _upsert_period(db, company.id, period)
+        clean, field_warnings = _sanitize_period_for_persistence(company, period)
+        warnings.extend(field_warnings)
+        sanitized_periods.append(clean)
+        outcome = await _upsert_period(db, company.id, clean)
         if outcome == "created":
             created += 1
         elif outcome == "updated":
             updated += 1
         else:
             skipped += 1
-    deleted = await _delete_stale_periods(db, company.id, parsed.periods)
+    deleted = await _delete_stale_periods(db, company.id, tuple(sanitized_periods))
 
     await db.commit()
     result = SecSyncResult(
@@ -176,6 +185,50 @@ async def _delete_stale_periods(
             deleted,
         )
     return deleted
+
+
+def _sanitize_period_for_persistence(
+    company: Company,
+    period: ParsedPeriod,
+) -> tuple[ParsedPeriod, list[str]]:
+    """Drop EPS fields that cannot be stored or are share-count mis-tags.
+
+    Keeps the rest of the period so one bad EPS value does not fail the sync.
+    """
+    warnings: list[str] = []
+    updates: dict[str, Decimal | str | None] = {}
+    for field, concept_field in (
+        ("eps_basic", "eps_basic_source_concept"),
+        ("eps_diluted", "eps_diluted_source_concept"),
+    ):
+        value = getattr(period, field)
+        if value is None:
+            continue
+        concept = getattr(period, concept_field)
+        if eps_value_plausible(value, shares=period.shares_outstanding):
+            continue
+        logger.warning(
+            "sec_eps_rejected company_id=%s ticker=%s cik=%s period=%s%s field=%s "
+            "concept=%s value=%s shares_outstanding=%s",
+            company.id,
+            company.ticker,
+            company.sec_cik,
+            period.fiscal_year,
+            period.fiscal_period,
+            field,
+            concept,
+            value,
+            period.shares_outstanding,
+        )
+        warnings.append(
+            f"{period.fiscal_year} {period.fiscal_period} {field}: "
+            f"rejected {concept}={value} before persistence"
+        )
+        updates[field] = None
+        updates[concept_field] = None
+    if not updates:
+        return period, warnings
+    return replace(period, **updates), warnings
 
 
 def _new_metric(company_id: int, period: ParsedPeriod) -> FinancialMetric:

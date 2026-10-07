@@ -1,0 +1,39 @@
+<section id="dashboard-news-documents" class="panel news-block sentinel-live"
+         hx-get="/dashboard/fragments/news-documents"
+         hx-trigger="every {{ poll_news_documents }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML">
+  <h3>Documents récents</h3>
+  <table class="compact">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Date</th>
+        <th>Source</th>
+        <th>Titre</th>
+        <th>Longueur</th>
+        <th>Statut AI</th>
+        <th>Confiance</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in news_documents %}
+      <tr class="{% if doc.short or doc.truncated_hint %}is-short{% endif %}">
+        <td>{{ doc.id }}</td>
+        <td>{{ display(doc.published_at or doc.fetched_at) }}</td>
+        <td>{{ doc.source_name }}</td>
+        <td>{{ doc.title or "—" }}</td>
+        <td>
+          {{ display(doc.char_count, 0) }}
+          {% if doc.short or doc.truncated_hint %}<span class="badge warn">court</span>{% endif %}
+        </td>
+        <td><span class="badge {{ badge_tone(doc.ai_status) }}">{{ label_ai_analysis_status(doc.ai_status) }}</span></td>
+        <td>{% if doc.ai_confidence is not none %}{{ doc.ai_confidence }}{% else %}—{% endif %}</td>
+        <td><a class="button-link" href="/intelligence/documents/{{ doc.id }}/view">Voir</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="8" class="muted">Aucun document.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

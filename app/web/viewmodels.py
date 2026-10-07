@@ -103,7 +103,7 @@ _ROLES = frozenset(
 
 def badge_tone(value: object) -> str:
     text = "" if value is None else str(value).strip().upper()
-    if not text:
+    if not text or text == "UNANALYZED":
         return "muted"
     if text in _BAD:
         return "bad"
@@ -257,12 +257,99 @@ async def dashboard_live_panels(session: AsyncSession) -> dict:
     jobs = await dashboard_jobs_fragment(session)
     bootstrap = await dashboard_bootstrap_fragment(session)
     gpu = await dashboard_gpu_fragment(session)
+    news = await dashboard_news_section(session)
     return {
         "jobs_live": jobs["jobs_live"],
         "universe_market": bootstrap["universe_market"],
         "gpu_workers": gpu["gpu_workers"],
         "gpu_online": gpu["gpu_online"],
+        **news,
     }
+
+
+async def dashboard_news_section(session: AsyncSession) -> dict:
+    """Actualités & IA supervision blocks for the main dashboard."""
+    from app.services.intelligence.supervision import (
+        supervision_ai_gpu,
+        supervision_alerts,
+        supervision_recent_documents,
+        supervision_sources,
+    )
+
+    sources = await supervision_sources(session)
+    documents = await supervision_recent_documents(session)
+    ai_gpu = await supervision_ai_gpu(session)
+    alerts = await supervision_alerts(session, sources=sources, documents=documents, ai_gpu=ai_gpu)
+    data = {
+        "news_sources": sources,
+        "news_documents": documents,
+        "news_ai_gpu": ai_gpu,
+        "news_alerts": alerts,
+    }
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_news_sources_fragment(session: AsyncSession) -> dict:
+    from app.services.intelligence.supervision import supervision_sources
+
+    data = {"news_sources": await supervision_sources(session)}
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_news_documents_fragment(session: AsyncSession) -> dict:
+    from app.services.intelligence.supervision import supervision_recent_documents
+
+    data = {"news_documents": await supervision_recent_documents(session)}
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_news_ai_fragment(session: AsyncSession) -> dict:
+    from app.services.intelligence.supervision import supervision_ai_gpu
+
+    data = {"news_ai_gpu": await supervision_ai_gpu(session)}
+    data.update(live_meta())
+    return data
+
+
+async def dashboard_news_alerts_fragment(session: AsyncSession) -> dict:
+    from app.services.intelligence.supervision import supervision_alerts
+
+    data = {"news_alerts": await supervision_alerts(session)}
+    data.update(live_meta())
+    return data
+
+
+async def intelligence_document_page(session: AsyncSession, document_id: int) -> dict | None:
+    import asyncio
+
+    from app.jobs.queues import find_active_ai_document_job
+    from app.services.intelligence.supervision import load_document_detail
+
+    detail = await load_document_detail(session, document_id)
+    if detail is None:
+        return None
+    active = await asyncio.to_thread(find_active_ai_document_job, document_id)
+    analysis = detail["analysis"]
+    can_analyze = active is None
+    force_relance = analysis is not None and analysis.status == "SUCCESS" and active is None
+    detail.update(
+        {
+            "active_job": None
+            if active is None
+            else {
+                "job_id": active.id,
+                "status": active.get_status(refresh=True),
+            },
+            "can_analyze": can_analyze,
+            "force_relance": force_relance,
+            "button_label": "Relancer l'analyse" if force_relance else "Analyser avec l'IA",
+        }
+    )
+    detail.update(live_meta())
+    return detail
 
 
 async def dashboard_jobs_fragment(session: AsyncSession) -> dict:

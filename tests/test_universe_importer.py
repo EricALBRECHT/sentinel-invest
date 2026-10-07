@@ -240,7 +240,7 @@ async def test_sp500_and_nasdaq_import_membership_and_removal(session_factory, j
         total = int((await session.execute(select(func.count()).select_from(Company))).scalar_one())
 
     assert first["created_companies"] == 3
-    assert first["existing_companies"] == 1
+    assert first["existing_companies"] + first["updated_companies"] == 1
     assert first["memberships_added"] == 4
     assert second["created_companies"] == 0
     assert second["memberships_existing"] == 4
@@ -253,6 +253,73 @@ async def test_sp500_and_nasdaq_import_membership_and_removal(session_factory, j
     assert old_membership is not None
     assert old_membership.is_active is False
     assert total == 6
+
+
+_ALPHABET_SP500_HTML = """
+<html><body>
+<table>
+<tr><th>Symbol</th><th>Security</th><th>GICS Sector</th><th>GICS Sub-Industry</th><th>CIK</th></tr>
+<tr><td>GOOGL</td><td>Alphabet Inc. (Class A)</td><td>Communication Services</td><td>Interactive Media</td><td>1652044</td></tr>
+<tr><td>GOOG</td><td>Alphabet Inc. (Class C)</td><td>Communication Services</td><td>Interactive Media</td><td>1652044</td></tr>
+<tr><td>MSFT</td><td>Microsoft Corporation</td><td>Information Technology</td><td>Systems Software</td><td>789019</td></tr>
+</table>
+</body></html>
+"""
+
+
+async def test_sp500_refresh_idempotent_and_cik_collision_without_500(session_factory, job_redis):
+    """GOOGL already owns the CIK; GOOG must not 500 or steal it (multi-class)."""
+    async with session_factory() as session:
+        session.add(
+            Company(
+                name="Alphabet Inc. (Class A)",
+                ticker="GOOGL",
+                universe_status="SCREENED",
+                discovery_source="SP500",
+                is_active=True,
+                market_symbol="GOOGL",
+                sec_cik="0001652044",
+            )
+        )
+        session.add(
+            Company(
+                name="Alphabet Inc.",
+                ticker="GOOG",
+                universe_status="SCREENED",
+                discovery_source="SP500",
+                is_active=True,
+                market_symbol="GOOG",
+                sec_cik=None,
+            )
+        )
+        await session.commit()
+
+        first = await refresh_service.refresh_sp500(
+            session, provider=FixtureSp500(_ALPHABET_SP500_HTML)
+        )
+        second = await refresh_service.refresh_sp500(
+            session, provider=FixtureSp500(_ALPHABET_SP500_HTML)
+        )
+
+        googl = await session.scalar(select(Company).where(Company.ticker == "GOOGL"))
+        goog = await session.scalar(select(Company).where(Company.ticker == "GOOG"))
+        msft = await session.scalar(select(Company).where(Company.ticker == "MSFT"))
+        goog_membership = await session.scalar(
+            select(UniverseMembership).where(
+                UniverseMembership.company_id == goog.id,
+                UniverseMembership.universe_name == "SP500",
+                UniverseMembership.is_active.is_(True),
+            )
+        )
+
+    assert first["conflict_companies"] >= 1
+    assert first["created_companies"] == 1  # MSFT
+    assert second["created_companies"] == 0
+    assert second["memberships_existing"] == 3
+    assert googl.sec_cik == "0001652044"
+    assert goog.sec_cik is None
+    assert msft is not None
+    assert goog_membership is not None
 
 
 async def test_bootstrap_batch_limit_and_job_dedup(session_factory, job_redis, monkeypatch):

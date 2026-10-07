@@ -575,7 +575,90 @@ async def test_polling_intervals_centralized():
     assert polling.POLL_JOBS_SECONDS == 10
     assert polling.POLL_GPU_SECONDS == 30
     assert polling.POLL_ADMIN_OVERVIEW_SECONDS == 60
+    assert polling.POLL_NEWS_SOURCES_SECONDS == 60
+    assert polling.POLL_NEWS_DOCUMENTS_SECONDS == 45
+    assert polling.POLL_NEWS_AI_SECONDS == 20
+    assert polling.POLL_NEWS_ALERTS_SECONDS == 30
     assert polling.SEARCH_DELAY_MS == 400
     ctx = polling.poll_context()
     assert ctx["poll_summary"] == 60
+    assert ctx["poll_news_sources"] == 60
     assert ctx["search_delay_ms"] == 400
+
+
+_HX = {"HX-Request": "true"}
+
+_FRAGMENT_PATHS = (
+    "/dashboard/fragments/summary",
+    "/dashboard/fragments/companies",
+    "/dashboard/fragments/bootstrap",
+    "/dashboard/fragments/jobs",
+    "/dashboard/fragments/gpu",
+    "/admin/view/fragments/jobs",
+    "/admin/view/fragments/bootstrap",
+    "/admin/view/fragments/gpu",
+    "/admin/view/fragments/overview",
+)
+
+
+def _assert_htmx_login_redirect(response):
+    assert response.status_code == 401
+    assert response.headers.get("HX-Redirect", "").startswith("/login")
+    body = response.text or ""
+    assert "Se connecter" not in body
+    assert 'name="password"' not in body
+    assert "<form" not in body.lower()
+    assert "Session expirée" not in body
+
+
+async def test_unauthenticated_browser_redirects_to_login(client):
+    response = await client.get("/dashboard", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/login")
+
+
+async def test_unauthenticated_htmx_fragment_uses_hx_redirect(client):
+    for path in _FRAGMENT_PATHS:
+        response = await client.get(path, headers=_HX, follow_redirects=False)
+        _assert_htmx_login_redirect(response)
+        # Fragment paths map next= to the parent page, not the fragment URL.
+        location = response.headers["HX-Redirect"]
+        assert "/fragments/" not in location
+        if path.startswith("/dashboard"):
+            assert "next=/dashboard" in location
+        else:
+            assert "next=/admin/view" in location
+
+
+async def test_unauthenticated_htmx_does_not_return_login_html(client):
+    """Regression: expired session must not inject login.html into fragment targets."""
+    response = await client.get("/dashboard/fragments/summary", headers=_HX, follow_redirects=False)
+    _assert_htmx_login_redirect(response)
+    # Follow redirects would be wrong for HTMX — body must stay empty of login UI.
+    assert len(response.content) == 0
+
+
+async def test_authenticated_htmx_fragment_returns_partial(client):
+    await _login(client, email="htmx-ok@example.com")
+    response = await client.get("/dashboard/fragments/summary", headers=_HX)
+    assert response.status_code == 200
+    assert "HX-Redirect" not in response.headers
+    assert 'id="dashboard-summary"' in response.text
+    assert "Se connecter" not in response.text
+
+
+async def test_htmx_after_session_expiry_redirects_full_page(client):
+    await _login(client, email="htmx-expire@example.com")
+    ok = await client.get("/dashboard/fragments/jobs", headers=_HX)
+    assert ok.status_code == 200
+    assert "Tâches" in ok.text or "jobs" in ok.text.lower() or 'id="dashboard-jobs"' in ok.text or "hx-get" in ok.text
+
+    client.cookies.set("sentinel_token", "not-a-jwt")
+    expired = await client.get("/dashboard/fragments/jobs", headers=_HX, follow_redirects=False)
+    _assert_htmx_login_redirect(expired)
+    assert expired.headers["HX-Redirect"].startswith("/login")
+
+
+async def test_jwt_access_token_expire_minutes_is_configured():
+    """Document current session length — do not inflate to hide HTMX auth bugs."""
+    assert settings.access_token_expire_minutes == 60

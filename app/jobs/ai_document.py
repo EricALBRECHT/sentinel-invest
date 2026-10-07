@@ -16,6 +16,8 @@ from app.jobs.queues import (
 )
 from app.models.ai_document_analysis import AiDocumentAnalysis
 from app.jobs.runner import job_session, run_async
+from app.core.config import settings
+from app.services.ai.prompts import PROMPT_VERSION
 from app.services.ai.service import (
     build_document_payload,
     ensure_analysis_row,
@@ -54,7 +56,16 @@ async def _run(document_id: int, *, force: bool = False, run_id: str | None = No
     payload_dict = payload.model_dump()
     payload_dict["run_id"] = run_id
     payload_dict["document_id"] = document_id
+    from app.services.ai.service import fit_payload_to_context, render_analysis_prompt
+
+    payload_dict = fit_payload_to_context(payload_dict)
+    payload_dict["rendered_prompt"] = render_analysis_prompt(payload_dict)
+    payload_dict["prompt_version"] = PROMPT_VERSION
+    payload_dict["requested_n_ctx"] = settings.ai_max_context
+    context_fit = payload_dict.get("context_fit")
     gpu_result = run_inference(payload_dict)
+    if isinstance(gpu_result, dict) and context_fit is not None:
+        gpu_result = {**gpu_result, "context_fit": context_fit}
     async with job_session() as session:
         row = await session.get(AiDocumentAnalysis, row_id)
         if row is None:

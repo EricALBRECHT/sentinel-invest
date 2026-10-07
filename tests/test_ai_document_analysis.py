@@ -132,6 +132,180 @@ def test_validation_rejects_bad_confidence_and_missing_evidence():
         validate_ai_result(json.dumps(no_evidence))
 
 
+def test_event_with_exact_keys_succeeds():
+    payload = dict(_VALID)
+    payload["events"] = [
+        {
+            "type": "PRODUCT_LAUNCH",
+            "importance": "MEDIUM",
+            "confidence": 80,
+            "description": "DGX Spark availability announced.",
+            "evidence": "NVIDIA DGX Spark will be available with 64GB",
+        }
+    ]
+    parsed, _ = validate_ai_result(json.dumps(payload))
+    assert parsed.events[0].type == "PRODUCT_LAUNCH"
+
+
+def test_event_type_alias_is_invalid_output():
+    payload = dict(_VALID)
+    payload["events"] = [
+        {
+            "event_type": "PRODUCT_LAUNCH",
+            "importance": "MEDIUM",
+            "confidence": 80,
+            "description": "DGX Spark availability announced.",
+            "evidence": "NVIDIA DGX Spark will be available with 64GB",
+        }
+    ]
+    with pytest.raises(ValueError, match="type"):
+        validate_ai_result(json.dumps(payload))
+
+
+def test_relationship_with_exact_keys_succeeds():
+    payload = dict(_VALID)
+    payload["relationships"] = [
+        {
+            "source_company": "CoreWeave",
+            "target_company": "NVIDIA Corporation",
+            "type": "CUSTOMER",
+            "confidence": 80,
+            "evidence": "CoreWeave utilise les GPU NVIDIA",
+        }
+    ]
+    parsed, _ = validate_ai_result(json.dumps(payload))
+    assert parsed.relationships[0].type == "CUSTOMER"
+
+
+def test_signal_type_alias_is_invalid_output():
+    payload = dict(_VALID)
+    payload["strategic_signals"] = [
+        {
+            "signal_type": "capacity",
+            "importance": "HIGH",
+            "confidence": 70,
+            "evidence": "datacenter expansion",
+        }
+    ]
+    with pytest.raises(ValueError):
+        validate_ai_result(json.dumps(payload))
+
+
+def test_partner_role_requires_explicit_evidence():
+    payload = dict(_VALID)
+    payload["companies"] = [
+        {
+            "company_id": None,
+            "name": "NVIDIA Corporation",
+            "ticker": "NVDA",
+            "role": "PARTNER",
+            "confidence": 90,
+            "evidence": "NVIDIA GPUs accelerate OpenAI models",
+        }
+    ]
+    with pytest.raises(ValueError, match="PARTNER"):
+        validate_ai_result(json.dumps(payload))
+    payload["companies"][0]["evidence"] = "available from top manufacturer partners"
+    with pytest.raises(ValueError, match="PARTNER"):
+        validate_ai_result(json.dumps(payload))
+    payload["companies"][0]["evidence"] = "NVIDIA announced a partnership with CoreWeave"
+    payload["companies"][0]["role"] = "PARTNER"
+    parsed, _ = validate_ai_result(json.dumps(payload))
+    assert parsed.companies[0].role == "PARTNER"
+
+
+def test_nvidia_subject_role_accepted():
+    payload = dict(_VALID)
+    payload["companies"] = [
+        {
+            "company_id": 2,
+            "name": "NVIDIA Corporation",
+            "ticker": "NVDA",
+            "role": "SUBJECT",
+            "confidence": 95,
+            "evidence": "NVIDIA DGX Spark will be available with 64GB",
+        }
+    ]
+    parsed, _ = validate_ai_result(json.dumps(payload))
+    assert parsed.companies[0].role == "SUBJECT"
+
+
+def test_prompt_forbids_truncation_inference_and_aliases():
+    from app.services.ai import prompts
+
+    assert prompts.PROMPT_VERSION == "document-v1.1"
+    assert "[…]" in prompts.SYSTEM_PROMPT
+    assert "do not invent partnership" in prompts.SYSTEM_PROMPT
+    assert "event_type" in prompts.SYSTEM_PROMPT
+    assert "signal_type" in prompts.SYSTEM_PROMPT
+    assert "NEVER default" in prompts.SYSTEM_PROMPT
+    assert '"type":"PRODUCT_LAUNCH"' in prompts.SYSTEM_PROMPT.replace(" ", "")
+    assert '"source_company":"Acer"' in prompts.SYSTEM_PROMPT.replace(" ", "")
+    assert '"signal":' in prompts.SYSTEM_PROMPT
+
+
+def test_fit_payload_to_context_keeps_prompt_within_budget(monkeypatch):
+    from app.core.config import settings
+    from app.services.ai.service import fit_payload_to_context, prompt_token_budget, render_analysis_prompt, _estimate_tokens
+
+    monkeypatch.setattr(settings, "ai_max_context", 2048)
+    monkeypatch.setattr(settings, "ai_max_output_tokens", 768)
+    long_text = ("NVIDIA announced DGX Spark with Acer. " * 400).strip()
+    fitted = fit_payload_to_context(
+        {
+            "document_id": 99,
+            "title": "NVIDIA DGX Spark",
+            "published_at": "2026-01-01T00:00:00+00:00",
+            "source_name": "NVIDIA Newsroom",
+            "source_type": "RSS",
+            "trust_level": "HIGH",
+            "company_context": [{"company_id": 2, "name": "NVIDIA Corporation", "ticker": "NVDA"}],
+            "content_text": long_text,
+            "content_truncated": False,
+            "original_char_count": len(long_text),
+            "analyzed_char_count": len(long_text),
+        }
+    )
+    assert fitted["content_truncated"] is True
+    assert fitted["analyzed_char_count"] < len(long_text)
+    assert fitted["analyzed_char_count"] >= 400
+    assert _estimate_tokens(render_analysis_prompt(fitted)) <= prompt_token_budget()
+    fit = fitted["context_fit"]
+    assert fit["context_max"] == 2048
+    assert fit["output_reserved_tokens"] == 768
+    assert fit["truncated"] is True
+    assert fit["chars_kept"] == fitted["analyzed_char_count"]
+    assert 0 < fit["pct_document_kept"] < 100
+
+
+def test_fit_payload_at_4096_keeps_full_medium_article(monkeypatch):
+    from app.core.config import settings
+    from app.services.ai.service import fit_payload_to_context
+
+    monkeypatch.setattr(settings, "ai_max_context", 4096)
+    monkeypatch.setattr(settings, "ai_max_output_tokens", 768)
+    text = ("NVIDIA and CoreWeave close the loop on agentic AI. " * 120).strip()
+    assert len(text) > 3000
+    fitted = fit_payload_to_context(
+        {
+            "document_id": 7,
+            "title": "NVIDIA and CoreWeave",
+            "published_at": "2026-01-01T00:00:00+00:00",
+            "source_name": "NVIDIA Newsroom",
+            "source_type": "RSS",
+            "trust_level": "HIGH",
+            "company_context": [],
+            "content_text": text,
+            "content_truncated": False,
+            "original_char_count": len(text),
+            "analyzed_char_count": len(text),
+        }
+    )
+    assert fitted["context_fit"]["truncated"] is False
+    assert fitted["context_fit"]["pct_document_kept"] == 100.0
+    assert fitted["context_fit"]["chars_kept"] == len(text)
+
+
 async def _seed_document(session_factory) -> tuple[int, int]:
     async with session_factory() as session:
         company = Company(name="NVIDIA Corporation", ticker="NVDA", is_active=True)

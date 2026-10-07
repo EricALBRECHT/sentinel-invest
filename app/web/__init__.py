@@ -32,6 +32,10 @@ def _sentinel_html_path(path: str) -> bool:
         return True
     if path.startswith("/dashboard/fragments/") or path.startswith("/admin/view/fragments/"):
         return True
+    if path.startswith("/intelligence/documents/") and (
+        path.endswith("/view") or "/fragments/" in path or path.endswith("/ai-analyze")
+    ):
+        return True
     return path.startswith("/companies/") and path.endswith("/view")
 
 

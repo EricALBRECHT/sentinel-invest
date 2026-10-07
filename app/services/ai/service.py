@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.models.ai_document_analysis import AiDocumentAnalysis
 from app.models.company import Company
 from app.models.intelligence import DocumentCompany, ExternalDocument, ExternalSource
-from app.services.ai.prompts import PROMPT_VERSION
+from app.services.ai.prompts import PROMPT_VERSION, SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 from app.services.ai.schemas import AiDocumentAnalysisRead, AiDocumentInput, AiDocumentResult, CompanyContextItem
 from app.services.ai.validation import validate_ai_result
 
@@ -22,6 +22,161 @@ logger = logging.getLogger("sentinel.ai")
 
 def effective_model_name() -> str:
     return settings.ai_model_name.strip() or "Qwen2.5-1.5B-Instruct-Q4_K_M"
+
+
+def render_user_prompt(payload: dict) -> str:
+    """Render the user half of the analysis prompt."""
+    import json
+
+    return USER_PROMPT_TEMPLATE.format(
+        document_id=payload.get("document_id"),
+        title=payload.get("title") or "",
+        published_at=payload.get("published_at") or "",
+        source_name=payload.get("source_name") or "",
+        source_type=payload.get("source_type") or "",
+        trust_level=payload.get("trust_level") or "",
+        company_context=json.dumps(payload.get("company_context") or [], ensure_ascii=False),
+        content_truncated=payload.get("content_truncated", False),
+        original_char_count=payload.get("original_char_count", 0),
+        analyzed_char_count=payload.get("analyzed_char_count", 0),
+        content_text=payload.get("content_text") or "",
+    )
+
+
+def render_analysis_prompt(payload: dict) -> str:
+    """Render the core-owned prompt so GPU workers do not need a prompt redeploy."""
+    return f"{SYSTEM_PROMPT}\n\n{render_user_prompt(payload)}"
+
+
+def _estimate_tokens(text: str) -> int:
+    """Char→token estimate for Qwen-class models (no tokenizer on core).
+
+    Calibrated from observed GPU failures (~2.1k prompt tokens on long articles).
+    """
+    return max(1, (len(text) + 4) // 5)
+
+
+def prompt_token_budget() -> int:
+    """Max prompt tokens so prompt + max_output fits in ai_max_context.
+
+    Near-full prompts leave too few tokens for JSON generation and cause INVALID_OUTPUT.
+    """
+    return max(256, settings.ai_max_context - settings.ai_max_output_tokens - 32)
+
+
+def _context_fit_metrics(
+    *,
+    original_content: str,
+    kept_content: str,
+    before_payload: dict,
+    after_payload: dict,
+    truncated: bool,
+) -> dict:
+    """Build the pre-inference context/truncation report requested for ctx experiments."""
+    system_tokens = _estimate_tokens(SYSTEM_PROMPT)
+    user_before = render_user_prompt(before_payload)
+    user_after = render_user_prompt(after_payload)
+    user_before_tokens = _estimate_tokens(user_before)
+    user_after_tokens = _estimate_tokens(user_after)
+    doc_tokens_original = _estimate_tokens(original_content)
+    doc_tokens_kept = _estimate_tokens(kept_content)
+    total_before = system_tokens + user_before_tokens
+    total_after = system_tokens + user_after_tokens
+    original_chars = len(original_content)
+    kept_chars = len(kept_content)
+    pct = round(100.0 * kept_chars / original_chars, 2) if original_chars else 100.0
+    return {
+        "original_chars": original_chars,
+        "original_document_tokens_est": doc_tokens_original,
+        "system_prompt_tokens_est": system_tokens,
+        "user_prompt_tokens_before_fit_est": user_before_tokens,
+        "user_prompt_tokens_after_fit_est": user_after_tokens,
+        "total_tokens_before_fit_est": total_before,
+        "tokens_kept_after_fit_est": total_after,
+        "document_tokens_kept_est": doc_tokens_kept,
+        "chars_kept": kept_chars,
+        "pct_document_kept": pct,
+        "truncated": bool(truncated),
+        "context_max": settings.ai_max_context,
+        "output_reserved_tokens": settings.ai_max_output_tokens,
+        "prompt_token_budget": prompt_token_budget(),
+    }
+
+
+def fit_payload_to_context(payload: dict) -> dict:
+    """Shrink content_text until the rendered prompt fits the GPU context budget.
+
+    Does not change GPU n_ctx / RQ — only the text sent to the model.
+    Attaches payload['context_fit'] with truncation metrics for experiments.
+    """
+    fitted = dict(payload)
+    content = str(fitted.get("content_text") or "")
+    original = int(fitted.get("original_char_count") or len(content))
+    budget = prompt_token_budget()
+    before_payload = {
+        **fitted,
+        "content_text": content,
+        "analyzed_char_count": len(content),
+        "original_char_count": original,
+        "content_truncated": bool(fitted.get("content_truncated", False)),
+    }
+
+    def tokens_for(text: str) -> int:
+        trial = {
+            **fitted,
+            "content_text": text,
+            "analyzed_char_count": len(text),
+            "original_char_count": original,
+        }
+        return _estimate_tokens(render_analysis_prompt(trial))
+
+    truncated = bool(fitted.get("content_truncated", False))
+    kept = content
+    if tokens_for(content) > budget:
+        low, high = 400, len(content)
+        best = _truncate_text(content, 400)
+        while low <= high:
+            mid = (low + high) // 2
+            candidate = _truncate_text(content, mid)
+            if tokens_for(candidate) <= budget:
+                best = candidate
+                low = mid + 1
+            else:
+                high = mid - 1
+        kept = best
+        truncated = True
+
+    fitted["content_text"] = kept
+    fitted["content_truncated"] = truncated
+    fitted["original_char_count"] = original
+    fitted["analyzed_char_count"] = len(kept)
+    after_payload = dict(fitted)
+    fit_metrics = _context_fit_metrics(
+        original_content=content,
+        kept_content=kept,
+        before_payload=before_payload,
+        after_payload=after_payload,
+        truncated=truncated,
+    )
+    fit_metrics["original_chars"] = original
+    fit_metrics["pct_document_kept"] = round(100.0 * len(kept) / original, 2) if original else 100.0
+    if original > len(content):
+        fit_metrics["original_document_tokens_est"] = _estimate_tokens("x" * original)
+    fitted["context_fit"] = fit_metrics
+    logger.info(
+        "ai_content_fit document_id=%s original_chars=%s chars_kept=%s pct_kept=%s "
+        "tokens_before=%s tokens_after=%s truncated=%s context_max=%s output_reserved=%s",
+        fitted.get("document_id"),
+        fit_metrics["original_chars"],
+        fit_metrics["chars_kept"],
+        fit_metrics["pct_document_kept"],
+        fit_metrics["total_tokens_before_fit_est"],
+        fit_metrics["tokens_kept_after_fit_est"],
+        fit_metrics["truncated"],
+        fit_metrics["context_max"],
+        fit_metrics["output_reserved_tokens"],
+    )
+    return fitted
 
 
 def effective_model_version() -> str:
@@ -60,7 +215,7 @@ async def build_document_payload(session: AsyncSession, document_id: int) -> AiD
         for link, company in links
     ]
     published = document.published_at.isoformat() if document.published_at else None
-    return AiDocumentInput(
+    payload = AiDocumentInput(
         document_id=document_id,
         title=document.title,
         published_at=published,
@@ -73,6 +228,8 @@ async def build_document_payload(session: AsyncSession, document_id: int) -> AiD
         original_char_count=original_len,
         analyzed_char_count=len(text),
     )
+    fitted = fit_payload_to_context(payload.model_dump())
+    return AiDocumentInput.model_validate(fitted)
 
 
 async def get_latest_analysis(
@@ -171,6 +328,14 @@ async def finalize_from_gpu_result(
     row.completed_at = finished
     row.worker_name = gpu_payload.get("worker_name")
     row.duration_ms = gpu_payload.get("duration_ms")
+    peak_candidates = [
+        gpu_payload.get("vram_peak_mb"),
+        gpu_payload.get("vram_before_mb"),
+        gpu_payload.get("vram_after_mb"),
+        gpu_payload.get("vram_during_mb"),
+        gpu_payload.get("vram_after_load_mb"),
+    ]
+    peak_values = [int(v) for v in peak_candidates if isinstance(v, int)]
     row.runtime_json = {
         "run_id": run_id or gpu_payload.get("run_id"),
         "model_backend": gpu_payload.get("model_backend") or gpu_payload.get("runtime_device"),
@@ -181,8 +346,12 @@ async def finalize_from_gpu_result(
         "tokens_output": gpu_payload.get("tokens_output"),
         "vram_before_mb": gpu_payload.get("vram_before_mb"),
         "vram_after_mb": gpu_payload.get("vram_after_mb"),
+        "vram_during_mb": gpu_payload.get("vram_during_mb"),
+        "vram_peak_mb": max(peak_values) if peak_values else None,
         "vram_total_mb": gpu_payload.get("vram_total_mb"),
+        "vram_after_load_mb": gpu_payload.get("vram_after_load_mb"),
         "repair_attempted": gpu_payload.get("repair_attempted", False),
+        "context_fit": gpu_payload.get("context_fit"),
     }
     if row.started_at is not None and row.duration_ms is None:
         started = row.started_at

@@ -24,7 +24,7 @@ updates = {
     "AI_MODEL_NAME": "Qwen2.5-1.5B-Instruct-Q4_K_M",
     "AI_MODEL_CACHE": "/home/eric/sentinel-models",
     "AI_GPU_LAYERS": "20",
-    "AI_MAX_CONTEXT": "2048",
+    "AI_MAX_CONTEXT": "4096",
     "AI_MAX_OUTPUT_TOKENS": "768",
     "AI_TEMPERATURE": "0",
     "SENTINEL_AI_STUB": "0",

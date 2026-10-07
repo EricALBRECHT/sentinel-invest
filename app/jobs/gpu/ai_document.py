@@ -39,13 +39,40 @@ def analyze_document_payload(payload: dict) -> dict:
     )
     vram_before = query_vram_mb()
     try:
+        requested = payload.get("requested_n_ctx")
+        from app.jobs.gpu.model_runtime import env_provider
+
+        if (
+            isinstance(requested, int)
+            and requested > 0
+            and env_provider() != "stub"
+            and os.environ.get("SENTINEL_AI_STUB") != "1"
+        ):
+            try:
+                from app.jobs.gpu.model_runtime import ensure_context_size
+
+                ensure_context_size(requested)
+            except ImportError:
+                logger.warning("ensure_context_size unavailable; using worker AI_MAX_CONTEXT")
         raw, parsed, meta = generate_structured_output(payload)
+        vram_during = query_vram_mb()
         vram_after = query_vram_mb()
         status = runtime_status()
         duration_ms = int((time.monotonic() - started) * 1000)
+        peak_vals = [
+            v
+            for v in (
+                vram_before.get("used"),
+                vram_during.get("used"),
+                vram_after.get("used"),
+                status.get("vram_after_load_mb"),
+            )
+            if isinstance(v, int)
+        ]
         logger.info(
             "ai_document_finished run_id=%s document_id=%s backend=%s gpu_layers=%s "
-            "input_chars=%s input_tokens=%s output_tokens=%s duration_ms=%s",
+            "input_chars=%s input_tokens=%s output_tokens=%s duration_ms=%s "
+            "context_size=%s vram_before_mb=%s vram_during_mb=%s vram_after_mb=%s vram_peak_mb=%s",
             payload.get("run_id"),
             payload.get("document_id"),
             status.get("model_backend") or meta.get("backend"),
@@ -54,6 +81,11 @@ def analyze_document_payload(payload: dict) -> dict:
             _token_field(meta.get("tokens_input")),
             _token_field(meta.get("tokens_output")),
             duration_ms,
+            status.get("context_size"),
+            vram_before.get("used"),
+            vram_during.get("used"),
+            vram_after.get("used"),
+            max(peak_vals) if peak_vals else None,
         )
         return {
             "ok": True,
@@ -72,9 +104,13 @@ def analyze_document_payload(payload: dict) -> dict:
             "repair_attempted": meta.get("repair_attempted", False),
             "duration_ms": duration_ms,
             "vram_before_mb": vram_before.get("used"),
+            "vram_during_mb": vram_during.get("used"),
             "vram_after_mb": vram_after.get("used"),
+            "vram_peak_mb": max(peak_vals) if peak_vals else None,
+            "vram_after_load_mb": status.get("vram_after_load_mb"),
             "vram_total_mb": vram_after.get("total") or vram_before.get("total"),
             "vram_free_after_mb": vram_after.get("free"),
+            "context_fit": payload.get("context_fit"),
         }
     except Exception as exc:
         duration_ms = int((time.monotonic() - started) * 1000)

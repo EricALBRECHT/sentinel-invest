@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Document #{{ document.id }} — Sentinel{% endblock %}
+{% block content %}
+<div class="page-toolbar">
+  <h1>Document #{{ document.id }}</h1>
+  <a href="/dashboard">← Tableau de bord</a>
+</div>
+
+<section class="panel">
+  <h2>Métadonnées</h2>
+  <ul class="facts">
+    <li>Titre <strong>{{ document.title or "—" }}</strong></li>
+    <li>Source <strong>{{ source.name }}</strong> · {{ source.source_type }}</li>
+    <li>URL
+      {% if document.url %}<a href="{{ document.url }}" rel="noopener noreferrer">{{ document.url }}</a>{% else %}—{% endif %}
+    </li>
+    <li>Publié <strong>{{ display(document.published_at) }}</strong></li>
+    <li>Récupéré <strong>{{ display(document.fetched_at) }}</strong></li>
+    <li>Longueur texte <strong>{{ display(char_count, 0) }}</strong></li>
+    <li>Provenance
+      <strong>
+        {% if content_source == "article_page" %}article_page
+        {% elif content_source == "rss_item" %}RSS teaser
+        {% elif content_source %}{{ content_source }}
+        {% else %}—{% endif %}
+      </strong>
+      {% if rss_teaser_chars %} · teaser {{ rss_teaser_chars }} car.{% endif %}
+      {% if article_chars %} · article {{ article_chars }} car.{% endif %}
+    </li>
+  </ul>
+</section>
+
+{% include "partials/document_ai_panel.html" %}
+
+<section class="panel">
+  <h2>Extrait du texte</h2>
+  <pre class="doc-excerpt">{{ (document.content_text or "—")[:2000] }}{% if char_count > 2000 %}…{% endif %}</pre>
+</section>
+{% endblock %}

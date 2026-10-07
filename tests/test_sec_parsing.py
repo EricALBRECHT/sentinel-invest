@@ -6,9 +6,13 @@ import pytest
 
 from app.services.sec.cik import cik_for_companyfacts, normalize_cik
 from app.services.sec.client import SecClient
-from app.services.sec.company_facts import parse_company_facts
+from app.services.sec.company_facts import eps_value_plausible, parse_company_facts
 from app.services.sec.errors import SecCompanyFactsNotFound
 from app.services.sec.free_cash_flow import compute_free_cash_flow
+from app.services.sec.sync import sync_sec_financials
+from app.models.company import Company
+from app.models.financial_metric import FinancialMetric
+from sqlalchemy import select
 from tests.sec_fixtures import duration, facts_payload, instant
 
 
@@ -348,6 +352,123 @@ def test_capex_falls_back_to_productive_assets():
     assert result.periods[0].capital_expenditure_source_concept == "PaymentsToAcquireProductiveAssets"
     assert result.periods[0].free_cash_flow == Decimal("60")
     assert any("PaymentsToAcquireProductiveAssets" in warning for warning in result.warnings)
+
+
+def test_eps_rejects_share_count_magnitude_mis_tagged_as_eps():
+    """SWK-style filings put weighted-average shares under EarningsPerShare*."""
+    assert eps_value_plausible(Decimal("2.81"))
+    assert not eps_value_plausible(Decimal("112000000"))
+    assert not eps_value_plausible(
+        Decimal("161781000"),
+        shares=Decimal("154127089"),
+    )
+
+    payload = facts_payload(
+        (
+            "us-gaap",
+            "Revenues",
+            "USD",
+            [duration("2020-12-29", "2021-04-03", 5000000000, fy=2021, fp="Q1", form="10-Q", filed="2021-05-01")],
+        ),
+        (
+            "us-gaap",
+            "NetIncomeLoss",
+            "USD",
+            [duration("2020-12-29", "2021-04-03", 133200000, fy=2021, fp="Q1", form="10-Q", filed="2021-05-01")],
+        ),
+        (
+            "us-gaap",
+            "EarningsPerShareBasic",
+            "USD/shares",
+            [duration("2020-12-29", "2021-04-03", "2.81", fy=2021, fp="Q1", form="10-Q", filed="2021-05-01")],
+        ),
+        (
+            "us-gaap",
+            "EarningsPerShareDiluted",
+            "USD/shares",
+            [
+                duration(
+                    "2020-12-29",
+                    "2021-04-03",
+                    112000000,
+                    fy=2021,
+                    fp="Q1",
+                    form="10-Q",
+                    filed="2021-05-10",
+                    accn="0000093556-21-000099",
+                ),
+                duration(
+                    "2020-12-29",
+                    "2021-04-03",
+                    "2.75",
+                    fy=2021,
+                    fp="Q1",
+                    form="10-Q",
+                    filed="2021-05-01",
+                    accn="0000093556-21-000050",
+                ),
+            ],
+        ),
+        (
+            "us-gaap",
+            "CommonStockSharesOutstanding",
+            "shares",
+            [instant("2021-04-03", 154127089, fy=2021, fp="Q1", form="10-Q", filed="2021-05-01")],
+        ),
+    )
+
+    result = parse_company_facts(payload, cik="93556")
+    period = result.periods[0]
+    assert period.revenue == Decimal("5000000000")
+    assert period.eps_basic == Decimal("2.81")
+    assert period.eps_diluted == Decimal("2.75")
+    assert period.eps_diluted_source_concept == "EarningsPerShareDiluted"
+    assert any("non-EPS magnitude" in warning or "implausible" in warning for warning in result.warnings)
+
+
+async def test_sec_sync_keeps_period_when_only_eps_diluted_is_invalid(session_factory):
+    payload = facts_payload(
+        (
+            "us-gaap",
+            "Revenues",
+            "USD",
+            [duration("2020-12-29", "2021-04-03", 5000000000, fy=2021, fp="Q1", form="10-Q")],
+        ),
+        (
+            "us-gaap",
+            "EarningsPerShareBasic",
+            "USD/shares",
+            [duration("2020-12-29", "2021-04-03", "2.81", fy=2021, fp="Q1", form="10-Q")],
+        ),
+        (
+            "us-gaap",
+            "EarningsPerShareDiluted",
+            "USD/shares",
+            [duration("2020-12-29", "2021-04-03", 112000000, fy=2021, fp="Q1", form="10-Q")],
+        ),
+    )
+
+    class _Client:
+        async def get_company_facts(self, cik: str) -> dict:
+            return payload
+
+    async with session_factory() as session:
+        company = Company(name="Stanley Sync", ticker="SWKT", sec_cik="0000093556")
+        session.add(company)
+        await session.commit()
+        await session.refresh(company)
+        result = await sync_sec_financials(session, company, _Client())
+        metric = (
+            await session.execute(
+                select(FinancialMetric).where(FinancialMetric.company_id == company.id)
+            )
+        ).scalar_one()
+
+    assert result.created == 1
+    assert metric.revenue == Decimal("5000000000")
+    assert metric.eps_basic == Decimal("2.81")
+    assert metric.eps_diluted is None
+    assert any("eps_diluted" in warning for warning in result.warnings)
 
 
 async def test_sec_client_pads_cik_and_sends_user_agent():

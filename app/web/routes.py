@@ -65,8 +65,44 @@ class LoginRequired(Exception):
         self.target = target
 
 
-async def login_required_handler(request: Request, exc: LoginRequired) -> RedirectResponse:
-    return RedirectResponse(f"/login?next={quote(exc.target, safe='/')}", status_code=303)
+def is_htmx_request(request: Request) -> bool:
+    return request.headers.get("HX-Request", "").lower() == "true"
+
+
+def login_path_for(target: str) -> str:
+    """Build /login?next=… Prefer a full page over a fragment path."""
+    next_path = target or "/dashboard"
+    if "/fragments/" in next_path:
+        if next_path.startswith("/dashboard"):
+            next_path = "/dashboard"
+        elif next_path.startswith("/admin"):
+            next_path = "/admin/view"
+        elif next_path.startswith("/intelligence/documents/"):
+            parts = next_path.strip("/").split("/")
+            # intelligence/documents/{id}/fragments/...
+            if len(parts) >= 3 and parts[0] == "intelligence" and parts[1] == "documents":
+                next_path = f"/intelligence/documents/{parts[2]}/view"
+            else:
+                next_path = "/dashboard"
+        else:
+            next_path = "/dashboard"
+    return f"/login?next={quote(safe_next(next_path), safe='/')}"
+
+
+async def login_required_handler(request: Request, exc: LoginRequired) -> Response:
+    """Unauthenticated HTML access.
+
+    Normal browser navigation: 303 redirect to the login page.
+    HTMX fragment/polling requests: HX-Redirect so the whole page navigates
+    to /login — never inject login.html into a fragment target.
+    """
+    login_url = login_path_for(exc.target)
+    if is_htmx_request(request):
+        response = Response(status_code=401, content=b"")
+        response.headers["HX-Redirect"] = login_url
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return RedirectResponse(login_url, status_code=303)
 
 
 def safe_next(value: str | None) -> str:
@@ -226,6 +262,117 @@ async def dashboard_fragment_gpu(request: Request, db: AsyncSession = Depends(ge
     return templates.TemplateResponse(
         request, "partials/dashboard_gpu.html", {"request": request, "user": user, **page}
     )
+
+
+@router.get("/dashboard/fragments/news-sources")
+async def dashboard_fragment_news_sources(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_news_sources_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_news_sources.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/news-documents")
+async def dashboard_fragment_news_documents(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_news_documents_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_news_documents.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/news-ai")
+async def dashboard_fragment_news_ai(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_news_ai_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_news_ai.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/dashboard/fragments/news-alerts")
+async def dashboard_fragment_news_alerts(request: Request, db: AsyncSession = Depends(get_db)):
+    user = await page_user(request, db)
+    page = await viewmodels.dashboard_news_alerts_fragment(db)
+    return templates.TemplateResponse(
+        request, "partials/dashboard_news_alerts.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/intelligence/documents/{document_id}/view")
+async def intelligence_document_view(
+    request: Request,
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await page_user(request, db)
+    page = await viewmodels.intelligence_document_page(db, document_id)
+    if page is None:
+        return templates.TemplateResponse(
+            request,
+            "not_found.html",
+            {"request": request, "user": user},
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        request, "document_detail.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.get("/intelligence/documents/{document_id}/fragments/ai")
+async def intelligence_document_ai_fragment(
+    request: Request,
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await page_user(request, db)
+    page = await viewmodels.intelligence_document_page(db, document_id)
+    if page is None:
+        return templates.TemplateResponse(
+            request,
+            "not_found.html",
+            {"request": request, "user": user},
+            status_code=404,
+        )
+    return templates.TemplateResponse(
+        request, "partials/document_ai_panel.html", {"request": request, "user": user, **page}
+    )
+
+
+@router.post("/intelligence/documents/{document_id}/ai-analyze")
+async def intelligence_document_ai_analyze(
+    request: Request,
+    document_id: int,
+    force: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await page_user(request, db)
+    page = await viewmodels.intelligence_document_page(db, document_id)
+    if page is None:
+        return templates.TemplateResponse(
+            request,
+            "not_found.html",
+            {"request": request, "user": user},
+            status_code=404,
+        )
+    form = await request.form()
+    force_flag = force or str(form.get("force") or "").lower() in {"1", "true", "yes"}
+    from app.jobs.queues import enqueue_ai_document_analysis
+
+    queued = await asyncio.to_thread(enqueue_ai_document_analysis, document_id, force_flag)
+    page = await viewmodels.intelligence_document_page(db, document_id)
+    if page is not None and page.get("active_job") is None and queued.get("job_id"):
+        page["active_job"] = {
+            "job_id": queued["job_id"],
+            "status": queued.get("status") or "queued",
+        }
+        page["can_analyze"] = False
+    if is_htmx_request(request):
+        return templates.TemplateResponse(
+            request, "partials/document_ai_panel.html", {"request": request, "user": user, **(page or {})}
+        )
+    return RedirectResponse(f"/intelligence/documents/{document_id}/view", status_code=303)
 
 
 @router.get("/companies/{company_id}/view")

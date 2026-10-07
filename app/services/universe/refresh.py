@@ -16,6 +16,13 @@ from app.services.universe.providers.base import NormalizedMember
 logger = logging.getLogger("sentinel.universe")
 REFRESH_KEY = "sentinel:universe:refresh:{universe}"
 
+# Outcomes for company identity handling during index refresh.
+OUTCOME_CREATED = "created"
+OUTCOME_UPDATED = "updated"
+OUTCOME_EXISTING = "existing"
+OUTCOME_SKIPPED = "skipped"
+OUTCOME_CONFLICT = "conflict"
+
 
 async def refresh_universe(
     session: AsyncSession,
@@ -25,17 +32,25 @@ async def refresh_universe(
 ) -> dict:
     selected = provider or provider_for(universe_name)
     members = await selected.fetch_members()
-    created = existing = added = already = removed = 0
+    created = updated = existing = skipped = conflict = 0
+    added = already = removed = 0
     multi_before = await _multi_membership_count(session)
     touched_ids: list[int] = []
     keep_ids: set[int] = set()
     for member in members:
-        company, was_created = await _company_for_member(session, member, selected.source)
-        if was_created:
+        company, outcome, cik_conflict = await _company_for_member(session, member, selected.source)
+        if outcome == OUTCOME_CREATED:
             created += 1
-        else:
+        elif outcome == OUTCOME_UPDATED:
+            updated += 1
+        elif outcome == OUTCOME_EXISTING:
             existing += 1
-            _fill_blanks(company, member)
+        elif outcome == OUTCOME_SKIPPED:
+            skipped += 1
+        elif outcome == OUTCOME_CONFLICT:
+            conflict += 1
+        if cik_conflict and outcome != OUTCOME_CONFLICT:
+            conflict += 1
         membership, is_new = await add_company_to_universe(
             session,
             company.id,
@@ -69,7 +84,10 @@ async def refresh_universe(
         "source_documentation": selected.documentation,
         "fetched": len(members),
         "created_companies": created,
+        "updated_companies": updated,
         "existing_companies": existing,
+        "skipped_companies": skipped,
+        "conflict_companies": conflict,
         "memberships_added": added,
         "memberships_existing": already,
         "memberships_removed": removed,
@@ -78,11 +96,15 @@ async def refresh_universe(
         "last_refresh": stamp,
     }
     logger.info(
-        "universe_refresh_finished universe=%s fetched=%s created=%s existing=%s added=%s removed=%s",
+        "universe_refresh_finished universe=%s fetched=%s created=%s updated=%s existing=%s "
+        "skipped=%s conflict=%s added=%s removed=%s",
         selected.universe_name,
         len(members),
         created,
+        updated,
         existing,
+        skipped,
+        conflict,
         added,
         removed,
     )
@@ -120,10 +142,13 @@ async def _company_for_member(
     session: AsyncSession,
     member: NormalizedMember,
     source: str,
-) -> tuple[Company, bool]:
+) -> tuple[Company, str, bool]:
     company = await _find_company(session, member)
     if company is not None:
-        return company, False
+        outcome = await _apply_member_fields(session, company, member)
+        return company, outcome, outcome == OUTCOME_CONFLICT
+
+    cik, cik_conflict = await _cik_for_new_company(session, member)
     company = Company(
         name=member.name,
         ticker=member.ticker,
@@ -132,7 +157,7 @@ async def _company_for_member(
         sector=member.sector,
         industry=member.industry,
         isin=member.isin,
-        sec_cik=member.sec_cik,
+        sec_cik=cik,
         market_symbol=member.market_symbol or member.ticker,
         universe_status="SCREENED",
         discovery_source=source,
@@ -143,41 +168,148 @@ async def _company_for_member(
     )
     session.add(company)
     await session.flush()
-    return company, True
+    if cik_conflict:
+        logger.warning(
+            "universe_cik_conflict_on_create ticker=%s cik=%s kept_cik_null=1",
+            member.ticker,
+            member.sec_cik,
+        )
+    return company, OUTCOME_CREATED, cik_conflict
 
 
 async def _find_company(session: AsyncSession, member: NormalizedMember) -> Company | None:
+    """Resolve identity without merging distinct share classes that share a CIK."""
     by_ticker = await session.scalar(select(Company).where(Company.ticker == member.ticker))
     if by_ticker is not None:
         return by_ticker
-    if member.sec_cik:
-        by_cik = await session.scalar(select(Company).where(Company.sec_cik == member.sec_cik))
-        if by_cik is not None:
-            return by_cik
+
     if member.isin:
         by_isin = await session.scalar(select(Company).where(Company.isin == member.isin))
         if by_isin is not None:
             return by_isin
+
+    if member.sec_cik:
+        owner = await _company_with_cik(session, member.sec_cik)
+        if owner is not None and owner.ticker == member.ticker:
+            return owner
+        # Same CIK, different ticker (e.g. GOOG / GOOGL): do not merge.
     return None
 
 
-def _fill_blanks(company: Company, member: NormalizedMember) -> None:
-    if not company.country and member.country:
-        company.country = member.country
-    if not company.exchange and member.exchange:
-        company.exchange = member.exchange
-    if not company.sector and member.sector:
-        company.sector = member.sector
-    if not company.industry and member.industry:
-        company.industry = member.industry
-    if not company.isin and member.isin:
-        company.isin = member.isin
-    if not company.sec_cik and member.sec_cik:
-        company.sec_cik = member.sec_cik
+async def _apply_member_fields(
+    session: AsyncSession,
+    company: Company,
+    member: NormalizedMember,
+) -> str:
+    changed = False
+    conflict = False
+
+    def _set(attr: str, value: object | None) -> None:
+        nonlocal changed
+        if value in (None, ""):
+            return
+        current = getattr(company, attr)
+        if current in (None, ""):
+            setattr(company, attr, value)
+            changed = True
+
+    _set("country", member.country)
+    _set("exchange", member.exchange)
+    _set("sector", member.sector)
+    _set("industry", member.industry)
+    _set("isin", member.isin)
     if not company.market_symbol:
         company.market_symbol = member.market_symbol or member.ticker
+        changed = True
     if not company.name and member.name:
         company.name = member.name
+        changed = True
+
+    if member.sec_cik:
+        cik_result = await _assign_cik(session, company, member.sec_cik)
+        if cik_result == OUTCOME_CONFLICT:
+            conflict = True
+        elif cik_result == OUTCOME_UPDATED:
+            changed = True
+
+    if conflict:
+        return OUTCOME_CONFLICT
+    if changed:
+        return OUTCOME_UPDATED
+    return OUTCOME_EXISTING
+
+
+async def _assign_cik(session: AsyncSession, company: Company, sec_cik: str) -> str:
+    """Attach CIK when safe. Never overwrite another company's unique CIK."""
+    normalized = _canonical_cik(sec_cik)
+    if not normalized:
+        return OUTCOME_SKIPPED
+    current = _canonical_cik(company.sec_cik)
+    if current == normalized:
+        return OUTCOME_EXISTING
+    if company.sec_cik:
+        # Company already has a different CIK — do not overwrite without merge proof.
+        logger.warning(
+            "universe_cik_conflict_existing_differs company_id=%s ticker=%s have=%s want=%s",
+            company.id,
+            company.ticker,
+            company.sec_cik,
+            sec_cik,
+        )
+        return OUTCOME_CONFLICT
+
+    owner = await _company_with_cik(session, sec_cik)
+    if owner is not None and owner.id != company.id:
+        logger.warning(
+            "universe_cik_conflict_owned company_id=%s ticker=%s cik=%s owner_id=%s owner_ticker=%s",
+            company.id,
+            company.ticker,
+            sec_cik,
+            owner.id,
+            owner.ticker,
+        )
+        return OUTCOME_CONFLICT
+
+    company.sec_cik = normalized
+    return OUTCOME_UPDATED
+
+
+async def _cik_for_new_company(
+    session: AsyncSession,
+    member: NormalizedMember,
+) -> tuple[str | None, bool]:
+    if not member.sec_cik:
+        return None, False
+    owner = await _company_with_cik(session, member.sec_cik)
+    if owner is not None and owner.ticker != member.ticker:
+        return None, True
+    return _canonical_cik(member.sec_cik), False
+
+
+async def _company_with_cik(session: AsyncSession, sec_cik: str) -> Company | None:
+    variants = _cik_lookup_variants(sec_cik)
+    if not variants:
+        return None
+    return await session.scalar(select(Company).where(Company.sec_cik.in_(variants)))
+
+
+def _canonical_cik(value: str | None) -> str | None:
+    if not value:
+        return None
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if not digits:
+        return None
+    # Match universe provider storage (zero-padded 10) used by index imports.
+    return digits.zfill(10)[-10:]
+
+
+def _cik_lookup_variants(value: str) -> list[str]:
+    canonical = _canonical_cik(value)
+    if not canonical:
+        return []
+    stripped = canonical.lstrip("0") or "0"
+    variants = {canonical, stripped}
+    return sorted(variants)
 
 
 async def _deactivate_missing(

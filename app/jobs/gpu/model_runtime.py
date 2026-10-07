@@ -251,6 +251,9 @@ def runtime_status() -> dict:
 
 
 def _build_prompt(payload: dict) -> str:
+    rendered = payload.get("rendered_prompt")
+    if isinstance(rendered, str) and rendered.strip():
+        return rendered
     from app.jobs.gpu.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
     user = USER_PROMPT_TEMPLATE.format(
@@ -295,6 +298,49 @@ def _run_llama_cpp(prompt: str) -> tuple[str, dict]:
         raise RuntimeError("Model returned empty content")
     usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
     return content, usage
+
+
+def unload_model_locked() -> None:
+    """Drop the loaded llama handle so the next load can change n_ctx."""
+    llm = _RUNTIME.get("llm")
+    _RUNTIME["llm"] = None
+    _RUNTIME["backend"] = None
+    _RUNTIME["context_size"] = None
+    _RUNTIME["model_memory_mb"] = None
+    _RUNTIME["warmed"] = False
+    if llm is not None:
+        del llm
+    logger.info("ai_model_unloaded")
+
+
+def ensure_context_size(n_ctx: int) -> dict[str, Any]:
+    """Reload the model when the requested context differs from the loaded one.
+
+    Used for controlled n_ctx experiments (2048 → 4096) without changing RQ architecture.
+    """
+    requested = max(512, int(n_ctx))
+    with _LOCK:
+        current = _RUNTIME.get("context_size")
+        if _RUNTIME.get("llm") is not None and current == requested:
+            return {"reloaded": False, "context_size": current}
+        if _RUNTIME.get("llm") is not None:
+            logger.info(
+                "ai_context_reload from=%s to=%s reason=requested_n_ctx",
+                current,
+                requested,
+            )
+            unload_model_locked()
+        os.environ["AI_MAX_CONTEXT"] = str(requested)
+        _load_llama_locked()
+        return {
+            "reloaded": True,
+            "context_size": _RUNTIME.get("context_size"),
+            "vram_after_load_mb": _RUNTIME.get("vram_after_load_mb"),
+            "vram_before_mb": _RUNTIME.get("vram_before_mb"),
+            "model_memory_mb": _RUNTIME.get("model_memory_mb"),
+            "backend": _RUNTIME.get("backend"),
+            "gpu_layers": _RUNTIME.get("gpu_layers"),
+        }
 
 
 def _load_llama_locked() -> None:

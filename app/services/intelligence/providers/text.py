@@ -9,6 +9,15 @@ import re
 
 _TAGS = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
+_SCRIPT = re.compile(r"<script[\s\S]*?</script>", re.IGNORECASE)
+_STYLE = re.compile(r"<style[\s\S]*?</style>", re.IGNORECASE)
+_BLOCK = re.compile(
+    r"<(?:div|section)[^>]*(?:class|id)=[\"'][^\"']*(?:entry-content|post-content|article-body|article__body)[^\"']*[\"'][^>]*>([\s\S]*?)</(?:div|section)>",
+    re.IGNORECASE,
+)
+_ARTICLE = re.compile(r"<article\b[^>]*>([\s\S]*?)</article>", re.IGNORECASE)
+_MAIN = re.compile(r"<main\b[^>]*>([\s\S]*?)</main>", re.IGNORECASE)
+_ELLIPSIS = ("[…]", "[...]", "…")
 _TRACKING = ("utm_", "utm-", "fbclid", "gclid", "mc_cid", "mc_eid")
 
 
@@ -22,6 +31,33 @@ def plain_text(value: str | None, limit: int) -> str | None:
     if len(text) > limit:
         return text[:limit]
     return text
+
+
+def looks_truncated(text: str | None) -> bool:
+    """RSS teasers often end with […] and are far shorter than a full article."""
+    if not text:
+        return True
+    trimmed = text.strip()
+    if any(trimmed.endswith(marker) for marker in _ELLIPSIS):
+        return True
+    if "[…]" in trimmed or "[...]" in trimmed:
+        return True
+    return False
+
+
+def extract_article_plain_text(html: str | None, limit: int) -> str | None:
+    """Best-effort article body from an HTML page. Prefer entry/post content over whole page."""
+    if not html:
+        return None
+    cleaned = _SCRIPT.sub(" ", html)
+    cleaned = _STYLE.sub(" ", cleaned)
+    for pattern in (_BLOCK, _ARTICLE, _MAIN):
+        match = pattern.search(cleaned)
+        if match:
+            body = plain_text(match.group(1), limit)
+            if body and len(body) >= 500:
+                return body
+    return plain_text(cleaned, limit)
 
 
 def content_hash(title: str | None, content: str | None) -> str:

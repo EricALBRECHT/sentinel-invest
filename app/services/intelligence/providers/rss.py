@@ -9,7 +9,12 @@ from app.core.config import settings
 from app.services.intelligence.providers.base import FetchBatch, NormalizedDocument
 from app.services.intelligence.providers.http import PoliteClient
 from app.services.intelligence.providers.robots import robots_policy
-from app.services.intelligence.providers.text import parse_datetime, plain_text
+from app.services.intelligence.providers.text import (
+    extract_article_plain_text,
+    looks_truncated,
+    parse_datetime,
+    plain_text,
+)
 
 logger = logging.getLogger("sentinel.intelligence")
 
@@ -39,6 +44,7 @@ class RssAtomProvider:
             document = self.normalize_document(raw, source)
             if document.published_at is not None and document.published_at < since:
                 continue
+            document = await self.enrich_truncated_document(document, user_agent=agent)
             documents.append(document)
         return FetchBatch(documents)
 
@@ -63,7 +69,54 @@ class RssAtomProvider:
                 "provider": self.provider_name,
                 "retention": "text_only_v1",
                 "feed_url": None if source is None else source.base_url,
+                "content_source": "rss_item",
             },
+        )
+
+    async def enrich_truncated_document(
+        self,
+        document: NormalizedDocument,
+        *,
+        user_agent: str | None = None,
+    ) -> NormalizedDocument:
+        """When RSS only has a teaser ([…]), fetch the article page once for full plain text."""
+        if not looks_truncated(document.content_text):
+            return document
+        if not document.url:
+            return document
+        agent = user_agent or settings.intelligence_user_agent
+        allowed, delay = await self._robots(document.url, agent)
+        if not allowed:
+            logger.info("article_fetch_blocked url=%s", document.url)
+            return document
+        self.http.set_crawl_delay(document.url, delay)
+        fetched = await self.http.get_text(document.url, user_agent=agent)
+        if fetched.error or fetched.status_code >= 400:
+            logger.info(
+                "article_fetch_failed url=%s status=%s error=%s",
+                document.url,
+                fetched.status_code,
+                fetched.error,
+            )
+            return document
+        body = extract_article_plain_text(fetched.text, settings.intelligence_max_text_chars)
+        if not body or len(body) <= len(document.content_text or ""):
+            return document
+        metadata = dict(document.metadata or {})
+        metadata["content_source"] = "article_page"
+        metadata["rss_teaser_chars"] = len(document.content_text or "")
+        metadata["article_chars"] = len(body)
+        return NormalizedDocument(
+            external_id=document.external_id,
+            url=document.url,
+            title=document.title,
+            published_at=document.published_at,
+            language=document.language,
+            author=document.author,
+            summary=document.summary,
+            content_text=body,
+            document_type=document.document_type,
+            metadata=metadata,
         )
 
     async def health_check(self, source) -> bool:

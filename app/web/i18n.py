@@ -157,6 +157,7 @@ AI_ANALYSIS_STATUS_LABELS = {
     "SUCCESS": "Réussie",
     "INVALID_OUTPUT": "Sortie invalide",
     "FAILED": "Échec",
+    "UNANALYZED": "Non analysé",
 }
 
 WARNING_LABELS = {

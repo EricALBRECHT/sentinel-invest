@@ -1,0 +1,158 @@
+<section id="document-ai-panel" class="panel sentinel-live"
+         {% if active_job %}
+         hx-get="/intelligence/documents/{{ document.id }}/fragments/ai"
+         hx-trigger="every {{ poll_document_ai }}s, sentinelRefresh from:body"
+         hx-swap="outerHTML"
+         {% endif %}>
+  <h2>Analyse IA</h2>
+  <p class="muted">L’analyse documentaire ne modifie pas les scores financiers.</p>
+
+  {% if active_job %}
+  <p class="job-banner">
+    Job <code>{{ active_job.job_id }}</code>
+    <span class="badge warn">{{ active_job.status }}</span>
+    — actualisation automatique…
+  </p>
+  {% endif %}
+
+  <form method="post" action="/intelligence/documents/{{ document.id }}/ai-analyze"
+        class="inline-actions"
+        hx-post="/intelligence/documents/{{ document.id }}/ai-analyze{% if force_relance %}?force=true{% endif %}"
+        hx-target="#document-ai-panel"
+        hx-swap="outerHTML">
+    {% if force_relance %}
+    <input type="hidden" name="force" value="true">
+    {% endif %}
+    <button type="submit" {% if not can_analyze %}disabled{% endif %}>{{ button_label }}</button>
+  </form>
+
+  {% if analysis %}
+  <ul class="facts">
+    <li>Statut <span class="badge {{ badge_tone(analysis.status) }}">{{ label_ai_analysis_status(analysis.status) }}</span></li>
+    <li>Modèle <strong>{{ analysis.model_name }}</strong></li>
+    <li>Prompt <strong>{{ analysis.prompt_version }}</strong></li>
+    <li>Durée
+      <strong>
+        {% if analysis.duration_ms is not none %}{{ display(analysis.duration_ms / 1000, 1) }} s{% else %}—{% endif %}
+      </strong>
+    </li>
+    <li>Tokens in/out
+      <strong>
+        {{ runtime.get("tokens_input") if runtime.get("tokens_input") is not none else "—" }}
+        /
+        {{ runtime.get("tokens_output") if runtime.get("tokens_output") is not none else "—" }}
+      </strong>
+    </li>
+    <li>Confidence <strong>{% if analysis.analysis_confidence is not none %}{{ analysis.analysis_confidence }}{% else %}—{% endif %}</strong></li>
+  </ul>
+
+  {% if analysis.status == "INVALID_OUTPUT" or analysis.status == "FAILED" %}
+  <div class="error-box">
+    <h3>Erreur</h3>
+    <p>{{ analysis.error_message or "—" }}</p>
+  </div>
+  {% if analysis.raw_output %}
+  <div class="panel nested">
+    <h3>Raw output</h3>
+    <pre class="raw-output">{{ analysis.raw_output }}</pre>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if analysis.status == "SUCCESS" %}
+  <h3>Summary</h3>
+  <p>{{ analysis.summary or "—" }}</p>
+
+  <h3>Companies</h3>
+  <table class="compact">
+    <thead><tr><th>Nom</th><th>Rôle</th><th>Ticker</th><th>Conf.</th><th>Evidence</th></tr></thead>
+    <tbody>
+      {% for company in companies %}
+      <tr>
+        <td>{{ company.name or "—" }}</td>
+        <td>{{ company.role or "—" }}</td>
+        <td>{{ company.ticker or "—" }}</td>
+        <td>{{ company.confidence if company.confidence is defined else "—" }}</td>
+        <td class="evidence">{{ company.evidence or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Aucun.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Events</h3>
+  <table class="compact">
+    <thead><tr><th>Type</th><th>Importance</th><th>Conf.</th><th>Description</th><th>Evidence</th></tr></thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td>{{ event.type or "—" }}</td>
+        <td>{{ event.importance or "—" }}</td>
+        <td>{{ event.confidence if event.confidence is defined else "—" }}</td>
+        <td>{{ event.description or "—" }}</td>
+        <td class="evidence">{{ event.evidence or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Aucun.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Relationships</h3>
+  <table class="compact">
+    <thead><tr><th>Source</th><th>Cible</th><th>Type</th><th>Conf.</th><th>Evidence</th></tr></thead>
+    <tbody>
+      {% for rel in relationships %}
+      <tr>
+        <td>{{ rel.source_company or "—" }}</td>
+        <td>{{ rel.target_company or "—" }}</td>
+        <td>{{ rel.type or "—" }}</td>
+        <td>{{ rel.confidence if rel.confidence is defined else "—" }}</td>
+        <td class="evidence">{{ rel.evidence or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Aucune.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Strategic signals</h3>
+  <table class="compact">
+    <thead><tr><th>Signal</th><th>Importance</th><th>Conf.</th><th>Evidence</th></tr></thead>
+    <tbody>
+      {% for signal in strategic_signals %}
+      <tr>
+        <td>{{ signal.signal or "—" }}</td>
+        <td>{{ signal.importance or "—" }}</td>
+        <td>{{ signal.confidence if signal.confidence is defined else "—" }}</td>
+        <td class="evidence">{{ signal.evidence or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">Aucun.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Risks</h3>
+  <table class="compact">
+    <thead><tr><th>Risque</th><th>Importance</th><th>Conf.</th><th>Evidence</th></tr></thead>
+    <tbody>
+      {% for risk in risks %}
+      <tr>
+        <td>{{ risk.risk or "—" }}</td>
+        <td>{{ risk.importance or "—" }}</td>
+        <td>{{ risk.confidence if risk.confidence is defined else "—" }}</td>
+        <td class="evidence">{{ risk.evidence or "—" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">Aucun.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% else %}
+  <p class="muted">Aucune analyse IA pour ce document.</p>
+  {% endif %}
+</section>
