@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     intelligence_scan_hours: int = 2
     intelligence_max_companies_per_run: int = 20
     intelligence_max_text_chars: int = 20000
+    # Source is "Ancien" after this many missed poll intervals (min floor below).
+    intelligence_stale_poll_multiplier: int = 2
+    intelligence_stale_min_hours: int = 24
+    # RQ failed-job counter on the dashboard uses this recent window.
+    jobs_failed_recent_hours: int = 24
     supply_chain_scan_hours: int = 24
     supply_chain_portfolio_interval_hours: int = 24
     supply_chain_deep_interval_hours: int = 24
@@ -78,6 +83,7 @@ class Settings(BaseSettings):
     ai_max_context: int = 2048
     ai_max_output_tokens: int = 768
     ai_max_input_chars: int = 12000
+    ai_min_content_chars: int = 500
     ai_temperature: float = 0.0
     ai_gpu_layers: int = 20
 

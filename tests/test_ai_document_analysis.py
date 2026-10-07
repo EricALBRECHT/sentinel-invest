@@ -325,9 +325,12 @@ async def _seed_document(session_factory) -> tuple[int, int]:
             title="NVDA partnership datacenter",
             published_at=datetime.now(timezone.utc),
             fetched_at=datetime.now(timezone.utc),
-            content_text="NVIDIA announced a partnership datacenter expansion with a cloud provider.",
+            content_text=(
+                "NVIDIA announced a partnership datacenter expansion with a cloud provider. "
+                * 20
+            ),
             document_type="NEWS_ARTICLE",
-            metadata_json={"retention": "text_only_v1"},
+            metadata_json={"retention": "text_only_v1", "content_source": "article_page"},
         )
         session.add(document)
         await session.flush()

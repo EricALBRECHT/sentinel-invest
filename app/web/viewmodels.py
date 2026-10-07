@@ -359,6 +359,7 @@ async def dashboard_jobs_fragment(session: AsyncSession) -> dict:
             "queued": None if jobs is None else jobs.get("queued"),
             "started": None if jobs is None else jobs.get("started"),
             "failed": None if jobs is None else jobs.get("failed"),
+            "failed_total": None if jobs is None else jobs.get("failed_total"),
             "finished_recent": None if jobs is None else jobs.get("finished_recent"),
         }
     }

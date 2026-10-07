@@ -49,7 +49,7 @@ a { color: #8eb6e0; }
 
 .nav-toggle, .nav-button { display: none; }
 
-.page { padding: 20px; max-width: 1480px; margin: 0 auto; }
+.page { padding: 20px; max-width: 1480px; margin: 0 auto; min-width: 0; }
 
 h1, h2, h3 { font-weight: 650; margin: 0 0 12px; }
 
@@ -63,7 +63,7 @@ h1, h2, h3 { font-weight: 650; margin: 0 0 12px; }
   border-radius: 8px;
 }
 
-.panel { padding: 12px; }
+.panel { padding: 12px; min-width: 0; }
 .cards article { min-width: 132px; max-width: 220px; padding: 8px 10px; flex: 1 1 158px; }
 .cards span, .muted { color: var(--muted); display: block; }
 .cards span { font-size: 12px; line-height: 1.3; }
@@ -200,15 +200,36 @@ table.compact tr.is-error td:first-child { box-shadow: inset 3px 0 0 var(--bad);
   margin: 10px 0;
 }
 .error-box h3 { margin: 0 0 6px; font-size: 14px; }
-.raw-output, .doc-excerpt {
-  white-space: pre-wrap;
-  word-break: break-word;
+.raw-output {
   font-size: 12px;
   max-height: 320px;
   overflow: auto;
   background: #101317;
   padding: 10px;
   border-radius: 6px;
+}
+.doc-excerpt {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 320px;
+  font-size: 12px;
+  background: #101317;
+  padding: 10px;
+  border-radius: 6px;
+}
+.doc-excerpt pre,
+.doc-excerpt code {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  overflow: visible;
+  font: inherit;
+  background: transparent;
 }
 .evidence { max-width: 280px; }
 .panel.nested { margin-top: 10px; }
@@ -251,7 +272,8 @@ button.is-busy { opacity: 0.85; }
     border-radius: 8px;
   }
   .nav-toggle:checked ~ .nav { display: flex; }
-  .panel { overflow-x: auto; }
+  .panel { overflow-x: auto; min-width: 0; }
+  .panel:has(.doc-excerpt) { overflow-x: hidden; }
   #company-table table, #discovery-results table { display: table; }
   .page-toolbar { gap: 6px 10px; }
   .live-controls { gap: 6px 8px; }

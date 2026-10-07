@@ -174,7 +174,13 @@ async def enqueue_gpu_system_probe() -> JSONResponse:
 async def job_queue_status() -> dict:
     counted = await asyncio.to_thread(collect_job_counts)
     if counted is None:
-        return {"queued": None, "started": None, "finished_recent": None, "failed": None}
+        return {
+            "queued": None,
+            "started": None,
+            "finished_recent": None,
+            "failed": None,
+            "failed_total": None,
+        }
     return counted
 
 

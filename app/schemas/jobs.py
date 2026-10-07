@@ -2,10 +2,11 @@ from pydantic import BaseModel
 
 
 class JobEnqueueRead(BaseModel):
-    job_id: str
+    job_id: str | None = None
     queue: str
     enqueued: bool
     status: str
+    reason: str | None = None
 
 
 class DueSyncRead(BaseModel):

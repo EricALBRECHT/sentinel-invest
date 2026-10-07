@@ -360,7 +360,13 @@ async def intelligence_document_ai_analyze(
     force_flag = force or str(form.get("force") or "").lower() in {"1", "true", "yes"}
     from app.jobs.queues import enqueue_ai_document_analysis
 
-    queued = await asyncio.to_thread(enqueue_ai_document_analysis, document_id, force_flag)
+    # Manual board action may analyze short docs; auto paths do not set allow_ineligible.
+    queued = await asyncio.to_thread(
+        enqueue_ai_document_analysis,
+        document_id,
+        force_flag,
+        allow_ineligible=True,
+    )
     page = await viewmodels.intelligence_document_page(db, document_id)
     if page is not None and page.get("active_job") is None and queued.get("job_id"):
         page["active_job"] = {
@@ -501,5 +507,9 @@ async def company_document_ai_analyze(
     await page_user(request, db)
     from app.jobs.queues import enqueue_ai_document_analysis
 
-    await asyncio.to_thread(enqueue_ai_document_analysis, document_id)
+    await asyncio.to_thread(
+        enqueue_ai_document_analysis,
+        document_id,
+        allow_ineligible=True,
+    )
     return RedirectResponse(f"/companies/{company_id}/view", status_code=303)

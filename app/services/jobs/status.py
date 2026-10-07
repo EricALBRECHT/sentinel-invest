@@ -1,5 +1,6 @@
 """Queue registries and a public view of one job. Arguments are not returned."""
 
+from datetime import datetime, timedelta, timezone
 import logging
 
 from rq import Queue
@@ -7,6 +8,7 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import FailedJobRegistry, FinishedJobRegistry, ScheduledJobRegistry, StartedJobRegistry
 
+from app.core.config import settings
 from app.jobs.queues import QUEUE_NAMES, redis_connection
 from app.services.jobs.errors import brief_error
 
@@ -82,13 +84,23 @@ _PUBLIC_RESULT_KEYS = frozenset(
 def collect_job_counts() -> dict[str, int] | None:
     try:
         connection = redis_connection()
-        queued = started = finished = failed = 0
+        queued = started = finished = 0
+        failed_recent = 0
+        failed_total = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            hours=max(1, int(settings.jobs_failed_recent_hours or 24))
+        )
         for name in QUEUE_NAMES:
             queue = Queue(name, connection=connection)
             queued += _as_int(queue.count)
             started += _as_int(StartedJobRegistry(name, connection=connection).count)
             finished += _as_int(FinishedJobRegistry(name, connection=connection).count)
-            failed += _as_int(FailedJobRegistry(name, connection=connection).count)
+            registry = FailedJobRegistry(name, connection=connection)
+            job_ids = list(registry.get_job_ids())
+            failed_total += len(job_ids)
+            for job_id in job_ids:
+                if _failed_job_is_recent(job_id, connection, cutoff):
+                    failed_recent += 1
     except Exception as exc:
         logger.warning("job_registry_count_failed error_type=%s", type(exc).__name__)
         return None
@@ -96,8 +108,23 @@ def collect_job_counts() -> dict[str, int] | None:
         "queued": queued,
         "started": started,
         "finished_recent": finished,
-        "failed": failed,
+        # Principal dashboard counter: recent failures only.
+        "failed": failed_recent,
+        "failed_total": failed_total,
     }
+
+
+def _failed_job_is_recent(job_id: str, connection, cutoff: datetime) -> bool:
+    try:
+        job = Job.fetch(job_id, connection=connection)
+    except NoSuchJobError:
+        return False
+    ended = job.ended_at or job.enqueued_at
+    if ended is None:
+        return True
+    if ended.tzinfo is None:
+        ended = ended.replace(tzinfo=timezone.utc)
+    return ended >= cutoff
 
 
 def describe_job(job_id: str) -> dict | None:
@@ -145,8 +172,6 @@ def _scheduled_at(job: Job, connection) -> str | None:
             raw = connection.zscore(registry.key, job.id)
             if raw is None:
                 return None
-            from datetime import datetime, timezone
-
             return datetime.fromtimestamp(float(raw), tz=timezone.utc).isoformat()
         if hasattr(score, "isoformat"):
             return score.isoformat()

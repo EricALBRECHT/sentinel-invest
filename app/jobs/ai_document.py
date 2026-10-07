@@ -44,6 +44,31 @@ async def _run(document_id: int, *, force: bool = False, run_id: str | None = No
                 "analysis_id": existing.id,
                 "run_id": run_id,
             }
+        if not force:
+            from app.models.intelligence import ExternalDocument
+            from app.services.ai.eligibility import assess_ai_eligibility
+
+            document = await session.get(ExternalDocument, document_id)
+            if document is not None:
+                assessment = assess_ai_eligibility(
+                    document.content_text,
+                    title=document.title,
+                    metadata=document.metadata_json or {},
+                )
+                if not assessment["eligible"]:
+                    await session.commit()
+                    logger.info(
+                        "ai_document_skipped_ineligible document_id=%s reason=%s",
+                        document_id,
+                        assessment["reason"],
+                    )
+                    return {
+                        "document_id": document_id,
+                        "status": "skipped_ineligible",
+                        "skipped": True,
+                        "reason": assessment["reason"],
+                        "run_id": run_id,
+                    }
         try:
             payload = await build_document_payload(session, document_id)
         except (LookupError, ValueError) as exc:

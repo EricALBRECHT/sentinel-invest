@@ -11,16 +11,15 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.ai_document_analysis import AiDocumentAnalysis
 from app.models.intelligence import ExternalDocument, ExternalSource
+from app.services.ai.eligibility import assess_ai_eligibility
 from app.services.ai.prompts import PROMPT_VERSION
 from app.services.ai.service import effective_model_name
 
 # Documents shorter than this (or still marked as RSS teaser) raise a supervision hint.
 SHORT_TEXT_CHARS = 500
-# Source fetch older than this many poll intervals is considered stale.
-STALE_POLL_MULTIPLIER = 2
-STALE_ABSOLUTE_HOURS = 48
 RECENT_DOC_LIMIT = 15
 
 
@@ -83,11 +82,8 @@ async def supervision_sources(session: AsyncSession) -> list[dict[str, Any]]:
         if fetch_at is None:
             stale = bool(source.is_active)
         else:
-            interval = max(1, int(source.poll_interval_minutes or 720))
-            threshold = timedelta(minutes=interval * STALE_POLL_MULTIPLIER)
-            absolute = timedelta(hours=STALE_ABSOLUTE_HOURS)
             age = now - fetch_at
-            stale = age > threshold or age > absolute
+            stale = age > _stale_threshold(source)
         has_error = source.last_error_at is not None and (
             source.last_success_at is None
             or _aware(source.last_error_at) >= (_aware(source.last_success_at) or source.last_error_at)
@@ -182,6 +178,21 @@ async def supervision_recent_documents(session: AsyncSession, *, limit: int = RE
     return rows
 
 
+def _stale_threshold(source: ExternalSource) -> timedelta:
+    """Missed-poll threshold aligned to the source interval, with a configurable floor.
+
+    Previously ``age > interval*2 OR age > 48h`` reduced to ``age > min(...)``, so a
+    2h poll source looked stale after only 4h. Daily-ish collection needs the floor.
+    """
+    interval = max(1, int(source.poll_interval_minutes or 720))
+    multiplier = max(1, int(settings.intelligence_stale_poll_multiplier or 2))
+    floor_hours = max(0, int(settings.intelligence_stale_min_hours or 0))
+    threshold = timedelta(minutes=interval * multiplier)
+    if floor_hours:
+        threshold = max(threshold, timedelta(hours=floor_hours))
+    return threshold
+
+
 async def supervision_ai_gpu(session: AsyncSession) -> dict[str, Any]:
     """GPU heartbeat presence + AI analysis aggregates for the last 24 hours."""
     from app.jobs.queues import QUEUE_GPU, redis_connection
@@ -229,15 +240,21 @@ async def supervision_ai_gpu(session: AsyncSession) -> dict[str, Any]:
         gpu_started = None
         current_job = None
 
+    # Latest analysis row per document (avoids counting superseded INVALID/FAILED retries).
+    latest_ids = select(func.max(AiDocumentAnalysis.id)).group_by(AiDocumentAnalysis.document_id)
     status_col = AiDocumentAnalysis.status
-    completed_filter = AiDocumentAnalysis.completed_at >= since
+    latest_in_window = (
+        AiDocumentAnalysis.id.in_(latest_ids),
+        AiDocumentAnalysis.completed_at.is_not(None),
+        AiDocumentAnalysis.completed_at >= since,
+    )
     counts = (
         await session.execute(
             select(
                 func.coalesce(func.sum(case((status_col == "SUCCESS", 1), else_=0)), 0),
                 func.coalesce(func.sum(case((status_col == "INVALID_OUTPUT", 1), else_=0)), 0),
                 func.coalesce(func.sum(case((status_col == "FAILED", 1), else_=0)), 0),
-            ).where(completed_filter)
+            ).where(*latest_in_window)
         )
     ).one()
     success_24h = int(counts[0] or 0)
@@ -247,7 +264,7 @@ async def supervision_ai_gpu(session: AsyncSession) -> dict[str, Any]:
         select(func.avg(AiDocumentAnalysis.duration_ms)).where(
             status_col == "SUCCESS",
             AiDocumentAnalysis.duration_ms.is_not(None),
-            completed_filter,
+            *latest_in_window,
         )
     )
     avg_duration = float(avg_duration) if avg_duration is not None else None
@@ -258,8 +275,8 @@ async def supervision_ai_gpu(session: AsyncSession) -> dict[str, Any]:
             select(AiDocumentAnalysis)
             .where(
                 AiDocumentAnalysis.status == "SUCCESS",
-                AiDocumentAnalysis.completed_at >= since,
                 AiDocumentAnalysis.runtime_json.is_not(None),
+                *latest_in_window,
             )
             .order_by(AiDocumentAnalysis.completed_at.desc())
             .limit(50)
@@ -388,6 +405,7 @@ async def load_document_detail(session: AsyncSession, document_id: int) -> dict[
     meta = document.metadata_json or {}
     result = None if analysis is None else (analysis.result_json or {})
     runtime = None if analysis is None else (analysis.runtime_json or {})
+    eligibility = assess_ai_eligibility(text, title=document.title, metadata=meta)
     return {
         "document": document,
         "source": source,
@@ -395,6 +413,8 @@ async def load_document_detail(session: AsyncSession, document_id: int) -> dict[
         "content_source": meta.get("content_source"),
         "rss_teaser_chars": meta.get("rss_teaser_chars"),
         "article_chars": meta.get("article_chars"),
+        "ai_eligible": eligibility["eligible"],
+        "ai_eligible_reason": eligibility["reason"],
         "analysis": analysis,
         "result": result or {},
         "runtime": runtime or {},

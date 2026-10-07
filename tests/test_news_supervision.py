@@ -261,8 +261,10 @@ async def test_analyze_button_enqueues_existing_pipeline(client, session_factory
     seed = await _seed_news(session_factory, with_analyses=False)
     calls = []
 
-    def _enqueue(document_id, force=False):
-        calls.append({"document_id": document_id, "force": force})
+    def _enqueue(document_id, force=False, allow_ineligible=False):
+        calls.append(
+            {"document_id": document_id, "force": force, "allow_ineligible": allow_ineligible}
+        )
         return {"job_id": f"ai-document-{document_id}-test", "queue": "intelligence", "enqueued": True, "status": "queued"}
 
     monkeypatch.setattr("app.jobs.queues.enqueue_ai_document_analysis", _enqueue)
@@ -274,7 +276,9 @@ async def test_analyze_button_enqueues_existing_pipeline(client, session_factory
         headers={"HX-Request": "true"},
     )
     assert response.status_code == 200
-    assert calls == [{"document_id": seed["success_doc_id"], "force": False}]
+    assert calls == [
+        {"document_id": seed["success_doc_id"], "force": False, "allow_ineligible": True}
+    ]
     assert "ai-document-" in response.text
     assert "disabled" in response.text or "queued" in response.text.lower() or "Job" in response.text
 
@@ -286,7 +290,7 @@ async def test_analyze_no_double_enqueue_when_active(client, session_factory, mo
     active.get_status = MagicMock(return_value="started")
     calls = []
 
-    def _enqueue(document_id, force=False):
+    def _enqueue(document_id, force=False, allow_ineligible=False):
         calls.append(document_id)
         return {"job_id": active.id, "queue": "intelligence", "enqueued": False, "status": "started"}
 
@@ -308,7 +312,7 @@ async def test_analyze_does_not_change_financial_scores(client, session_factory,
     seed = await _seed_news(session_factory)
     monkeypatch.setattr(
         "app.jobs.queues.enqueue_ai_document_analysis",
-        lambda document_id, force=False: {
+        lambda document_id, force=False, allow_ineligible=False: {
             "job_id": "ai-document-x",
             "enqueued": True,
             "status": "queued",
@@ -332,3 +336,200 @@ async def test_news_htmx_expired_session_keeps_hx_redirect(client):
     assert response.status_code == 401
     assert response.headers["HX-Redirect"].startswith("/login")
     assert "Se connecter" not in (response.text or "")
+
+
+async def test_ai_eligibility_short_vs_normal():
+    from app.services.ai.eligibility import assess_ai_eligibility
+
+    short = assess_ai_eligibility("Teaser only […]", title="Headline")
+    assert short["eligible"] is False
+    assert short["reason"] in {"too_short", "truncated_teaser"}
+
+    normal = assess_ai_eligibility(
+        "NVIDIA and CoreWeave expand AI infrastructure partnership. " * 20,
+        title="NVIDIA partnership",
+        metadata={"content_source": "article_page"},
+    )
+    assert normal["eligible"] is True
+
+
+async def test_daily_source_not_stale_after_few_hours(session_factory, monkeypatch):
+    from app.services.intelligence.supervision import supervision_sources
+
+    monkeypatch.setattr("app.core.config.settings.intelligence_stale_poll_multiplier", 2)
+    monkeypatch.setattr("app.core.config.settings.intelligence_stale_min_hours", 24)
+    async with session_factory() as session:
+        session.add(
+            ExternalSource(
+                name="Daily-ish feed",
+                source_type="RSS",
+                base_url="https://example.test/daily",
+                provider="rss",
+                is_active=True,
+                trust_level="HIGH",
+                # Config says 2h, but floor keeps it non-stale for 24h.
+                poll_interval_minutes=120,
+                last_poll_at=datetime.now(timezone.utc) - timedelta(hours=7),
+                last_success_at=datetime.now(timezone.utc) - timedelta(hours=7),
+                metadata_json={},
+            )
+        )
+        await session.commit()
+        rows = await supervision_sources(session)
+    assert rows[0]["stale"] is False
+    assert rows[0]["status"] == "ok"
+
+
+async def test_old_failed_excluded_from_recent_job_counter(monkeypatch):
+    from datetime import timezone as tz
+    from app.services.jobs import status as job_status
+
+    class _Job:
+        def __init__(self, ended_at):
+            self.ended_at = ended_at
+            self.enqueued_at = ended_at
+
+    class _Registry:
+        def __init__(self, name, connection=None):
+            self.name = name
+
+        def get_job_ids(self):
+            return ["old-fail", "new-fail"] if self.name == "default" else []
+
+        @property
+        def count(self):
+            return len(self.get_job_ids())
+
+    class _Queue:
+        def __init__(self, name, connection=None):
+            self.count = 0
+
+    old = datetime.now(tz.utc) - timedelta(days=5)
+    new = datetime.now(tz.utc) - timedelta(hours=2)
+    jobs = {"old-fail": _Job(old), "new-fail": _Job(new)}
+
+    monkeypatch.setattr(job_status, "QUEUE_NAMES", ("default",))
+    monkeypatch.setattr(job_status, "redis_connection", lambda: object())
+    monkeypatch.setattr(job_status, "Queue", _Queue)
+    monkeypatch.setattr(job_status, "StartedJobRegistry", lambda *a, **k: type("R", (), {"count": 0})())
+    monkeypatch.setattr(job_status, "FinishedJobRegistry", lambda *a, **k: type("R", (), {"count": 0})())
+    monkeypatch.setattr(job_status, "FailedJobRegistry", _Registry)
+    monkeypatch.setattr(
+        job_status.Job,
+        "fetch",
+        staticmethod(lambda job_id, connection=None: jobs[job_id]),
+    )
+    monkeypatch.setattr(job_status.settings, "jobs_failed_recent_hours", 24)
+
+    counted = job_status.collect_job_counts()
+    assert counted is not None
+    assert counted["failed"] == 1
+    assert counted["failed_total"] == 2
+
+
+async def test_latest_analysis_wins_in_24h_metrics(session_factory, monkeypatch):
+    from app.services.intelligence.supervision import supervision_ai_gpu
+
+    monkeypatch.setattr(
+        "app.services.gpu.workers.gpu_workers_for_page",
+        lambda: [{"name": "sentinel-gpu-01", "online": True, "status": "online", "probe": {}}],
+    )
+    monkeypatch.setattr("app.jobs.queues.redis_connection", lambda: MagicMock())
+
+    class _Queue:
+        count = 0
+
+    class _Registry:
+        count = 0
+
+        def get_job_ids(self):
+            return []
+
+    monkeypatch.setattr("rq.Queue", lambda *a, **k: _Queue())
+    monkeypatch.setattr("rq.registry.StartedJobRegistry", lambda *a, **k: _Registry())
+
+    now = datetime.now(timezone.utc)
+    async with session_factory() as session:
+        source = ExternalSource(
+            name="Metrics feed",
+            source_type="RSS",
+            base_url="https://example.test/m",
+            provider="rss",
+            is_active=True,
+            trust_level="HIGH",
+            poll_interval_minutes=180,
+            metadata_json={},
+        )
+        session.add(source)
+        await session.flush()
+        doc = ExternalDocument(
+            source_id=source.id,
+            title="Doc metrics",
+            url="https://example.test/m/1",
+            fetched_at=now,
+            content_text="NVIDIA partnership article body " * 40,
+            document_type="NEWS_ARTICLE",
+            metadata_json={"content_source": "article_page"},
+        )
+        session.add(doc)
+        await session.flush()
+        session.add(
+            AiDocumentAnalysis(
+                document_id=doc.id,
+                model_name="old-model",
+                prompt_version="document-v1",
+                status="INVALID_OUTPUT",
+                completed_at=now - timedelta(hours=2),
+                duration_ms=1000,
+            )
+        )
+        session.add(
+            AiDocumentAnalysis(
+                document_id=doc.id,
+                model_name="Qwen2.5-1.5B-Instruct-Q4_K_M",
+                prompt_version=PROMPT_VERSION,
+                status="SUCCESS",
+                completed_at=now - timedelta(hours=1),
+                duration_ms=2000,
+                runtime_json={"tokens_input": 100, "tokens_output": 20},
+            )
+        )
+        # Old FAILED outside the latest-per-document choice for another doc
+        other = ExternalDocument(
+            source_id=source.id,
+            title="Old fail",
+            url="https://example.test/m/2",
+            fetched_at=now,
+            content_text="x" * 600,
+            document_type="NEWS_ARTICLE",
+            metadata_json={},
+        )
+        session.add(other)
+        await session.flush()
+        session.add(
+            AiDocumentAnalysis(
+                document_id=other.id,
+                model_name="Qwen2.5-1.5B-Instruct-Q4_K_M",
+                prompt_version=PROMPT_VERSION,
+                status="FAILED",
+                completed_at=now - timedelta(days=3),
+                duration_ms=500,
+            )
+        )
+        await session.commit()
+        stats = await supervision_ai_gpu(session)
+
+    assert stats["success_24h"] == 1
+    assert stats["invalid_24h"] == 0
+    assert stats["failed_24h"] == 0
+
+
+async def test_document_detail_shows_ai_eligibility(client, session_factory):
+    seed = await _seed_news(session_factory)
+    await _login(client, email="elig@example.com")
+    short = await client.get(f"/intelligence/documents/{seed['invalid_doc_id']}/view")
+    assert "Éligible IA" in short.text
+    assert "non" in short.text
+    full = await client.get(f"/intelligence/documents/{seed['success_doc_id']}/view")
+    assert "Éligible IA" in full.text
+    assert "oui" in full.text

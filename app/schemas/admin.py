@@ -40,6 +40,7 @@ class JobQueueStatus(BaseModel):
     started: int | None
     finished_recent: int | None
     failed: int | None
+    failed_total: int | None = None
 
 
 class SyncSupervision(BaseModel):

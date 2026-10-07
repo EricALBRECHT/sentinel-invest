@@ -120,7 +120,8 @@ def test_canonical_url_robots_and_feed_text_stay_plain():
     assert canonical_url("https://Example.com/a/b/?utm_source=x&id=1#frag") == "https://example.com/a/b?id=1"
     assert plain_text("<p>Hello <b>world</b></p>", 100) == "Hello world"
     assert looks_truncated("Short teaser with missing context […]") is True
-    assert looks_truncated("A complete sentence without ellipsis markers.") is False
+    assert looks_truncated("A complete sentence without ellipsis markers.") is True  # short body
+    assert looks_truncated("A complete sentence without ellipsis markers. " * 20) is False
     html = "<html><body><div class='entry-content'><p>" + ("Full article body. " * 40) + "</p></div></body></html>"
     body = extract_article_plain_text(html, 20000)
     assert body is not None and len(body) > 500
@@ -172,6 +173,63 @@ async def test_rss_provider_respects_robots(monkeypatch):
     assert batch.error == "robots.txt disallows this feed"
     assert batch.documents == []
     assert http.calls == ["https://news.example/robots.txt"]
+
+
+async def test_rss_enriches_short_teaser_without_ellipsis():
+    """Doc-13 style: ~350 char RSS body, no reliable marker, still needs article fetch."""
+    teaser = (
+        "Telecom operators are increasingly building their AI strategies on open models "
+        "and the reasons go beyond mere cost. Open models give telcos the ability to trust, "
+        "control and customize AI across their most critical workloads."
+    )
+    assert 200 < len(teaser) < 500
+    assert looks_truncated(teaser) is True
+    feed = f"""<?xml version="1.0"?>
+    <rss><channel>
+      <item>
+        <title>Telecom open models</title>
+        <link>https://blogs.example/telecom</link>
+        <guid>telecom-1</guid>
+        <description>{teaser}</description>
+      </item>
+    </channel></rss>"""
+    article = (
+        "<html><body><article><div class='entry-content'><p>"
+        + ("Full telecom open-models article for NVIDIA newsroom enrichment. " * 40)
+        + "</p></div></article></body></html>"
+    )
+
+    class Scripted:
+        def __init__(self):
+            self.calls = []
+
+        def set_crawl_delay(self, url, seconds):
+            return None
+
+        async def get_text(self, url, user_agent=None):
+            self.calls.append(url)
+            if url.endswith("/robots.txt"):
+                return HttpText(200, "User-agent: *\nAllow: /\n", url)
+            if url.endswith("/releases.xml"):
+                return HttpText(200, feed, url)
+            if url.endswith("/telecom"):
+                return HttpText(200, article, url)
+            return HttpText(404, "", url)
+
+    provider = RssAtomProvider(http=Scripted())
+    source = ExternalSource(
+        name="NVIDIA newsroom",
+        source_type="COMPANY_IR",
+        base_url="https://blogs.example/releases.xml",
+        provider="rss",
+        trust_level="HIGH",
+        poll_interval_minutes=120,
+        metadata_json={},
+    )
+    batch = await provider.fetch_since(source, NOW - timedelta(days=7))
+    assert len(batch.documents) == 1
+    assert len(batch.documents[0].content_text or "") > 500
+    assert batch.documents[0].metadata["content_source"] == "article_page"
 
 
 async def test_rss_enriches_truncated_teaser_from_article_page():

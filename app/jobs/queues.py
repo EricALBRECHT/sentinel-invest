@@ -412,7 +412,12 @@ def find_active_ai_document_job(document_id: int) -> Job | None:
     return None
 
 
-def enqueue_ai_document_analysis(document_id: int, force: bool = False) -> dict:
+def enqueue_ai_document_analysis(
+    document_id: int,
+    force: bool = False,
+    *,
+    allow_ineligible: bool = False,
+) -> dict:
     active = find_active_ai_document_job(document_id)
     if active is not None:
         return {
@@ -421,6 +426,16 @@ def enqueue_ai_document_analysis(document_id: int, force: bool = False) -> dict:
             "enqueued": False,
             "status": active.get_status(refresh=True),
         }
+    if not force and not allow_ineligible:
+        assessment = _ai_eligibility_snapshot(document_id)
+        if assessment is not None and not assessment.get("eligible"):
+            return {
+                "job_id": None,
+                "queue": QUEUE_INTELLIGENCE,
+                "enqueued": False,
+                "status": "skipped_ineligible",
+                "reason": assessment.get("reason") or "ineligible",
+            }
     run_id = ai_document_run_id()
     job_id = ai_document_job_id(document_id, run_id)
     # No automatic RQ retry: config/programming errors must not linger as scheduled.
@@ -435,6 +450,36 @@ def enqueue_ai_document_analysis(document_id: int, force: bool = False) -> dict:
         force=force,
         run_id=run_id,
     )
+
+
+def _ai_eligibility_snapshot(document_id: int) -> dict | None:
+    """Sync-safe eligibility read (enqueue may run inside or outside an event loop)."""
+    import concurrent.futures
+
+    from app.jobs.runner import run_async
+
+    def _call():
+        return run_async(lambda: _ai_eligibility_for_document(document_id))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_call).result(timeout=30)
+
+
+async def _ai_eligibility_for_document(document_id: int) -> dict | None:
+    from app.jobs.runner import job_session
+    from app.models.intelligence import ExternalDocument
+    from app.services.ai.eligibility import assess_ai_eligibility
+
+    async with job_session() as session:
+        document = await session.get(ExternalDocument, document_id)
+        if document is None:
+            # Unknown id: let the job start and fail with a clear FAILED status.
+            return None
+        return assess_ai_eligibility(
+            document.content_text,
+            title=document.title,
+            metadata=document.metadata_json or {},
+        )
 
 
 def cleanup_stale_ai_document_job(job_id: str) -> dict:

@@ -17,6 +17,12 @@
     <li>Publié <strong>{{ display(document.published_at) }}</strong></li>
     <li>Récupéré <strong>{{ display(document.fetched_at) }}</strong></li>
     <li>Longueur texte <strong>{{ display(char_count, 0) }}</strong></li>
+    <li>Éligible IA
+      <strong>{% if ai_eligible %}oui{% else %}non{% endif %}</strong>
+      {% if not ai_eligible and ai_eligible_reason %}
+      <span class="muted">({{ ai_eligible_reason }})</span>
+      {% endif %}
+    </li>
     <li>Provenance
       <strong>
         {% if content_source == "article_page" %}article_page
@@ -34,6 +40,6 @@
 
 <section class="panel">
   <h2>Extrait du texte</h2>
-  <pre class="doc-excerpt">{{ (document.content_text or "—")[:2000] }}{% if char_count > 2000 %}…{% endif %}</pre>
+  <div class="doc-excerpt"><pre>{{ (document.content_text or "—")[:2000] }}{% if char_count > 2000 %}…{% endif %}</pre></div>
 </section>
 {% endblock %}

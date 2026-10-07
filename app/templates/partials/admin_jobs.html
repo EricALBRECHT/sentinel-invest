@@ -6,7 +6,10 @@
   <ul class="facts">
     <li>En attente <strong>{{ display(status.jobs.queued, 0) }}</strong></li>
     <li>En cours <strong>{{ display(status.jobs.started, 0) }}</strong></li>
-    <li>Échec <strong>{{ display(status.jobs.failed, 0) }}</strong></li>
+    <li>Échec 24 h <strong>{{ display(status.jobs.failed, 0) }}</strong></li>
+    {% if status.jobs.failed_total is not none %}
+    <li>Échec historique <strong>{{ display(status.jobs.failed_total, 0) }}</strong></li>
+    {% endif %}
     <li>Terminées récemment <strong>{{ display(status.jobs.finished_recent, 0) }}</strong></li>
   </ul>
 </section>

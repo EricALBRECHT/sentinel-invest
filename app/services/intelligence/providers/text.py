@@ -19,6 +19,8 @@ _ARTICLE = re.compile(r"<article\b[^>]*>([\s\S]*?)</article>", re.IGNORECASE)
 _MAIN = re.compile(r"<main\b[^>]*>([\s\S]*?)</main>", re.IGNORECASE)
 _ELLIPSIS = ("[…]", "[...]", "…")
 _TRACKING = ("utm_", "utm-", "fbclid", "gclid", "mc_cid", "mc_eid")
+# Below this length, RSS body is treated as a teaser and article fetch is attempted.
+MIN_FULL_ARTICLE_CHARS = 500
 
 
 def plain_text(value: str | None, limit: int) -> str | None:
@@ -33,16 +35,25 @@ def plain_text(value: str | None, limit: int) -> str | None:
     return text
 
 
-def looks_truncated(text: str | None) -> bool:
-    """RSS teasers often end with […] and are far shorter than a full article."""
+def has_truncation_marker(text: str | None) -> bool:
     if not text:
-        return True
+        return False
     trimmed = text.strip()
     if any(trimmed.endswith(marker) for marker in _ELLIPSIS):
         return True
-    if "[…]" in trimmed or "[...]" in trimmed:
+    return "[…]" in trimmed or "[...]" in trimmed
+
+
+def looks_truncated(text: str | None) -> bool:
+    """RSS teasers: ellipsis markers, or bodies too short to be a full article."""
+    if not text:
         return True
-    return False
+    trimmed = text.strip()
+    if has_truncation_marker(trimmed):
+        return True
+    # Short feed descriptions without […] still need an article-page fetch
+    # (historical NVIDIA newsroom teasers were stuck at ~350 chars).
+    return len(trimmed) < MIN_FULL_ARTICLE_CHARS
 
 
 def extract_article_plain_text(html: str | None, limit: int) -> str | None:
